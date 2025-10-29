@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.0.0"
+BOT_VERSION = "2.0.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -458,6 +458,15 @@ def main() -> None:
     
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
+    # Админ-команды (добавляем ПЕРВЫМИ, чтобы они имели приоритет)
+    application.add_handler(CommandHandler('status', cmd_status))
+    application.add_handler(CommandHandler('logs', cmd_logs))
+    application.add_handler(CommandHandler('backup_on', cmd_backup_on))
+    application.add_handler(CommandHandler('backup_off', cmd_backup_off))
+    application.add_handler(CommandHandler('update', cmd_update))
+    application.add_handler(CommandHandler('restart', cmd_restart))
+    application.add_handler(CommandHandler('admin', cmd_help_admin))
+    
     # Основной conversation handler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
@@ -473,17 +482,8 @@ def main() -> None:
         allow_reentry=True
     )
     
-    # Добавление handlers
+    # Добавление conversation handler
     application.add_handler(conv_handler)
-    
-    # Админ-команды
-    application.add_handler(CommandHandler('status', cmd_status))
-    application.add_handler(CommandHandler('logs', cmd_logs))
-    application.add_handler(CommandHandler('backup_on', cmd_backup_on))
-    application.add_handler(CommandHandler('backup_off', cmd_backup_off))
-    application.add_handler(CommandHandler('update', cmd_update))
-    application.add_handler(CommandHandler('restart', cmd_restart))
-    application.add_handler(CommandHandler('admin', cmd_help_admin))
     
     logger.info("Бот запущен и готов к работе!")
     application.run_polling()
