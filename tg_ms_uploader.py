@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.4.0"
+BOT_VERSION = "4.5.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -283,30 +283,25 @@ def get_moysklad_statistics():
         data = response.json()
         total_variants = data['meta']['size']
         
-        # Получаем модификации с остатком (stock > 0)
-        # Используем фильтр по остаткам
-        response_stock = requests.get(
-            f"{url_variants}?limit=0&filter=stock>0", 
-            headers=headers, 
-            timeout=10
-        )
-        variants_with_stock = 0
-        if response_stock.status_code == 200:
-            variants_with_stock = response_stock.json()['meta']['size']
+        # Подсчитываем модификации с остатком и с фото
+        # Делаем это одним проходом для оптимизации
+        logger.info(f"Подсчитываю модификации с остатком и фото...")
         
-        # Для подсчета модификаций с фото нужно проверить каждую
-        # Это долго, поэтому делаем выборку по страницам
+        variants_with_stock = 0
         variants_with_images = 0
         offset = 0
         limit = 100
         
-        while offset < min(total_variants, 1000):  # Ограничим 1000 для скорости
+        while offset < total_variants:
+            # Запрашиваем модификации с информацией об остатках
             response_page = requests.get(
-                f"{url_variants}?limit={limit}&offset={offset}", 
+                f"{url_variants}?limit={limit}&offset={offset}&expand=stock", 
                 headers=headers, 
-                timeout=10
+                timeout=30
             )
+            
             if response_page.status_code != 200:
+                logger.warning(f"Ошибка получения страницы модификаций: {response_page.status_code}")
                 break
                 
             variants = response_page.json().get('rows', [])
@@ -314,14 +309,21 @@ def get_moysklad_statistics():
                 break
             
             for variant in variants:
+                # Проверяем наличие остатка
+                stock_value = variant.get('stock', 0)
+                if stock_value and stock_value > 0:
+                    variants_with_stock += 1
+                
                 # Проверяем наличие images
                 if variant.get('images') and variant['images'].get('meta', {}).get('size', 0) > 0:
                     variants_with_images += 1
             
             offset += limit
+            logger.info(f"Обработано {offset}/{total_variants} модификаций...")
             
-            # Если проверили все модификации
-            if offset >= total_variants:
+            # Ограничим проверку для ускорения (опционально)
+            if offset >= 5000:  # Проверим максимум 5000 модификаций
+                logger.info(f"Достигнут лимит проверки в 5000 модификаций")
                 break
         
         return {
