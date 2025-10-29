@@ -48,7 +48,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.3.0"
+BOT_VERSION = "2.4.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -508,7 +508,7 @@ def main() -> None:
     application.add_handler(conv_handler)
     
     logger.info("Бот запущен и готов к работе!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
