@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.1.1"
+BOT_VERSION = "5.2.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -284,20 +284,37 @@ def get_moysklad_statistics():
         response.raise_for_status()
         data = response.json()
         total_variants = data['meta']['size']
+        logger.info(f"Всего модификаций: {total_variants}")
         
-        # Подсчитываем модификации с остатком и с фото
-        # Делаем это одним проходом для оптимизации
-        logger.info(f"Подсчитываю модификации с остатком и фото...")
+        # Получаем количество с остатком через отчет
+        # ВАЖНО: поле stock доступно ТОЛЬКО в отчете, НЕ в /entity/variant!
+        logger.info("Получаю количество позиций с остатком...")
+        url_stock = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
+        
+        response_stock = requests.get(
+            f"{url_stock}?limit=0&stockMode=positiveOnly",
+            headers=headers,
+            timeout=30
+        )
         
         variants_with_stock = 0
+        if response_stock.status_code == 200:
+            variants_with_stock = response_stock.json()['meta']['size']
+            logger.info(f"Позиций с остатком > 0: {variants_with_stock}")
+        else:
+            logger.warning(f"Ошибка получения отчета по остаткам: {response_stock.status_code}")
+        
+        # Подсчитываем модификации с фото
+        logger.info("Подсчитываю модификации с фото...")
         variants_with_images = 0
         offset = 0
         limit = 100
+        checked = 0
         
-        while offset < total_variants:
-            # Запрашиваем модификации с информацией об остатках
+        # Проверяем до 1000 модификаций для скорости
+        while offset < min(total_variants, 1000):
             response_page = requests.get(
-                f"{url_variants}?limit={limit}&offset={offset}&expand=stock", 
+                f"{url_variants}?limit={limit}&offset={offset}", 
                 headers=headers, 
                 timeout=30
             )
@@ -311,28 +328,23 @@ def get_moysklad_statistics():
                 break
             
             for variant in variants:
-                # Проверяем наличие остатка
-                stock_value = variant.get('stock', 0)
-                if stock_value and stock_value > 0:
-                    variants_with_stock += 1
-                
                 # Проверяем наличие images
                 if variant.get('images') and variant['images'].get('meta', {}).get('size', 0) > 0:
                     variants_with_images += 1
             
             offset += limit
-            logger.info(f"Обработано {offset}/{total_variants} модификаций...")
+            checked = offset
             
-            # Ограничим проверку для ускорения (опционально)
-            if offset >= 5000:  # Проверим максимум 5000 модификаций
-                logger.info(f"Достигнут лимит проверки в 5000 модификаций")
-                break
+            if offset % 300 == 0:
+                logger.info(f"Проверено {offset} модификаций на наличие фото...")
         
-            return {
+        logger.info(f"Модификаций с фото: {variants_with_images} (проверено {checked})")
+        
+        return {
             'total': total_variants,
             'with_stock': variants_with_stock,
             'with_images': variants_with_images,
-            'checked': min(offset, total_variants)
+            'checked': min(checked, total_variants)
         }
         
     except Exception as e:
