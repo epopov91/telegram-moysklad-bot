@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.3.0"
+BOT_VERSION = "5.3.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -338,7 +338,7 @@ def get_variant_stock(variant_id: str):
     
     for attempt in range(3):
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response = requests.get(url, headers=headers, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -353,11 +353,15 @@ def get_variant_stock(variant_id: str):
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут при получении остатка (попытка {attempt + 1}/3)")
             if attempt < 2:
-                time.sleep(1)
+                time.sleep(2)
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Ошибка соединения при получении остатка (попытка {attempt + 1}/3): {e}")
+            if attempt < 2:
+                time.sleep(2)
         except Exception as e:
             logger.error(f"Ошибка при получении остатка товара {variant_id}: {e}")
             if attempt < 2:
-                time.sleep(1)
+                time.sleep(2)
             else:
                 return None
     
@@ -959,8 +963,13 @@ def handle_code_input_text(message, code):
             logger.error(f"Ошибка при получении фото: {e}")
             images_count = 0
         
-        # Получаем товарный остаток
-        stock = get_variant_stock(variant_id)
+        # Получаем товарный остаток (необязательно - если ошибка, просто не показываем)
+        stock = None
+        try:
+            stock = get_variant_stock(variant_id)
+        except Exception as e:
+            logger.warning(f"Не удалось получить остаток для {variant_id}: {e}")
+            # Не падаем, просто пропускаем показ остатка
         
         # Инициализируем user_data для пользователя если его нет
         if user_id not in user_data:
