@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "3.0.0"
+BOT_VERSION = "3.1.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -237,43 +237,35 @@ def cmd_cancel(message):
     )
 
 # =========================
-# АДМИН КОМАНДЫ
+# КОМАНДЫ УПРАВЛЕНИЯ
 # =========================
 
-@bot.message_handler(commands=['admin'])
-def cmd_admin(message):
-    """Список админ-команд"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
+@bot.message_handler(commands=['help', 'admin'])
+def cmd_help(message):
+    """Список команд"""
     help_text = """
-🔧 **Админ-панель**
+🔧 **Команды бота**
 
 **Мониторинг:**
-/status - Статус бота
-/logs - Последние логи
+/status - Статус бота и статистика
+/logs - Последние логи (для диагностики)
 
 **Управление:**
-/backup_on - Включить сохранение фото
+/backup_on - Включить сохранение фото на диск
 /backup_off - Выключить сохранение фото
 /restart - Перезапустить бота
-/update - Обновить и перезапустить
+/update - Обновить бота из GitHub
 /stop - Остановить бота
 
 **Основное:**
-/start - Начать загрузку
-/cancel - Отменить операцию
+/start - Начать загрузку фото
+/cancel - Отменить текущую операцию
 """
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['status'])
 def cmd_status(message):
     """Статус бота"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     uptime = datetime.now() - BOT_START_TIME
     hours = uptime.seconds // 3600
     minutes = (uptime.seconds % 3600) // 60
@@ -297,10 +289,6 @@ def cmd_status(message):
 @bot.message_handler(commands=['logs'])
 def cmd_logs(message):
     """Последние логи"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     try:
         with open('bot.log', 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -316,10 +304,6 @@ def cmd_logs(message):
 @bot.message_handler(commands=['backup_on'])
 def cmd_backup_on(message):
     """Включить сохранение фото"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     global BACKUP_PHOTOS
     BACKUP_PHOTOS = True
     bot.send_message(message.chat.id, "✅ Сохранение фото включено")
@@ -328,10 +312,6 @@ def cmd_backup_on(message):
 @bot.message_handler(commands=['backup_off'])
 def cmd_backup_off(message):
     """Выключить сохранение фото"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     global BACKUP_PHOTOS
     BACKUP_PHOTOS = False
     bot.send_message(message.chat.id, "✅ Сохранение фото выключено")
@@ -340,10 +320,6 @@ def cmd_backup_off(message):
 @bot.message_handler(commands=['update'])
 def cmd_update(message):
     """Обновление бота из Git"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     try:
         bot.send_message(message.chat.id, "🔄 Обновление кода из GitHub...")
         result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
@@ -362,23 +338,15 @@ def cmd_update(message):
 @bot.message_handler(commands=['restart'])
 def cmd_restart(message):
     """Перезапуск бота"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     bot.send_message(message.chat.id, "🔄 Перезапуск бота...")
-    logger.info("Перезапуск бота по команде администратора")
+    logger.info(f"Перезапуск бота по команде {message.from_user.username}")
     os.execv(sys.executable, ['python'] + sys.argv)
 
 @bot.message_handler(commands=['stop'])
 def cmd_stop(message):
     """Остановка бота"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Доступ запрещен")
-        return
-    
     bot.send_message(message.chat.id, "🛑 Остановка бота...")
-    logger.info("Остановка бота по команде администратора")
+    logger.info(f"Остановка бота по команде {message.from_user.username}")
     bot.stop_polling()
     sys.exit(0)
 
