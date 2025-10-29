@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.2.0"
+BOT_VERSION = "2.3.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
