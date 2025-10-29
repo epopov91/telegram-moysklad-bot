@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "3.2.0"
+BOT_VERSION = "3.2.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -406,47 +406,58 @@ def handle_code_input(message):
     
     bot.send_message(message.chat.id, f"🔍 Ищу модификацию с кодом: {code}...")
     
-    variant = get_variant_by_code(code)
-    
-    if not variant:
-        bot.send_message(message.chat.id, f"❌ Модификация с кодом '{code}' не найдена. Попробуйте другой код или /cancel")
-        return
-    
-    variant_name = variant.get('name', 'Без названия')
-    variant_id = variant['id']
-    
-    # Получаем текущие фото
-    existing_images = get_variant_images(variant_id)
-    images_count = len(existing_images)
-    
-    # Сохраняем данные
-    user_data[user_id] = {
-        'variant_id': variant_id,
-        'variant_code': code,
-        'variant_name': variant_name,
-        'existing_images_count': images_count
-    }
-    user_states[user_id] = STATE_GET_PHOTOS
-    
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.row(types.KeyboardButton('✅ Завершить'), types.KeyboardButton('❌ Отмена'))
-    
-    # Формируем сообщение с информацией о фото
-    if images_count > 0:
-        photos_emoji = "📸" * min(images_count, 5)  # Максимум 5 эмодзи
-        photos_info = f"📷 **Текущих фото:** {images_count} {photos_emoji}\n\n"
-    else:
-        photos_info = "📷 **Текущих фото:** нет\n\n"
-    
-    bot.send_message(
-        message.chat.id,
-        f"✅ **Найдено:** {variant_name}\n"
-        f"{photos_info}"
-        f"➕ **Отправьте фото** (можно несколько).\n"
-        f"Когда закончите - нажмите '✅ Завершить'",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
+    try:
+        variant = get_variant_by_code(code)
+        
+        if not variant:
+            bot.send_message(message.chat.id, f"❌ Модификация с кодом '{code}' не найдена. Попробуйте другой код или /cancel")
+            return
+        
+        variant_name = variant.get('name', 'Без названия')
+        variant_id = variant['id']
+        
+        # Получаем текущие фото (с обработкой ошибок)
+        try:
+            existing_images = get_variant_images(variant_id)
+            images_count = len(existing_images)
+        except Exception as e:
+            logger.error(f"Ошибка при получении фото: {e}")
+            images_count = 0  # Если не удалось получить - считаем что 0
+        
+        # Сохраняем данные
+        user_data[user_id] = {
+            'variant_id': variant_id,
+            'variant_code': code,
+            'variant_name': variant_name,
+            'existing_images_count': images_count
+        }
+        user_states[user_id] = STATE_GET_PHOTOS
+        
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard.row(types.KeyboardButton('✅ Завершить'), types.KeyboardButton('❌ Отмена'))
+        
+        # Формируем сообщение с информацией о фото
+        if images_count > 0:
+            photos_emoji = "📸" * min(images_count, 5)  # Максимум 5 эмодзи
+            photos_info = f"📷 **Текущих фото:** {images_count} {photos_emoji}\n\n"
+        else:
+            photos_info = "📷 **Текущих фото:** нет\n\n"
+        
+        bot.send_message(
+            message.chat.id,
+            f"✅ **Найдено:** {variant_name}\n"
+            f"{photos_info}"
+            f"➕ **Отправьте фото** (можно несколько).\n"
+            f"Когда закончите - нажмите '✅ Завершить'",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        
+        logger.info(f"Пользователь {message.from_user.username} нашел товар: {variant_name} (код: {code}, фото: {images_count})")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке кода {code}: {e}")
+        bot.send_message(message.chat.id, f"❌ Произошла ошибка при поиске товара. Попробуйте еще раз или обратитесь к администратору.")
 
 def process_photo(message):
     """Обработка загруженного фото"""
