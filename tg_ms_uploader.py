@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.0.1"
+BOT_VERSION = "4.1.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -602,9 +602,17 @@ def handle_text(message):
     text = message.text
     state = user_states.get(user_id, STATE_MAIN_MENU)
     
-    # Обработка универсальных кнопок
+    # Обработка универсальных кнопок (работают всегда)
     if text == BTN_BACK or text == BTN_CANCEL or text == "❌ Отмена":
         show_main_menu(message)
+        return
+    
+    if text == BTN_FINISH or text == "✅ Завершить":
+        finish_upload(message)
+        return
+    
+    if text == BTN_ANOTHER_PRODUCT or text == BTN_ANOTHER_CODE or text == "🔄 Другой товар" or text == "🔄 Другой код":
+        start_upload_flow(message)
         return
     
     # Обработка кнопок главного меню
@@ -618,34 +626,36 @@ def handle_text(message):
         elif text == BTN_HELP:
             cmd_help(message)
         else:
-            bot.send_message(message.chat.id, "Используйте кнопки меню для навигации")
+            # Любой другой текст - показываем подсказку
+            bot.send_message(
+                message.chat.id, 
+                "Используйте кнопки меню для навигации 👇",
+                reply_markup=get_main_menu_keyboard()
+            )
+        return
     
     # Ввод кода модификации
-    elif state == STATE_GET_CODE:
-        # Проверяем, не кнопка ли это
+    if state == STATE_GET_CODE:
+        # Проверяем, не кнопка ли это из истории
         if text.startswith("🔖 "):
-            # Это код из истории
             code = text.replace("🔖 ", "").strip()
             handle_code_input_text(message, code)
-        elif text == BTN_ANOTHER_CODE:
-            start_upload_flow(message)
         else:
             # Обычный ввод кода
             handle_code_input_text(message, text)
+        return
     
-    # Загрузка фото
-    elif state == STATE_GET_PHOTOS:
-        if text == BTN_FINISH:
-            finish_upload(message)
-        elif text == BTN_ANOTHER_PRODUCT or text == BTN_ANOTHER_CODE:
-            start_upload_flow(message)
-        elif text == BTN_SEND_PHOTO:
-            bot.send_message(message.chat.id, "📸 Отправьте фото товара")
-        else:
-            bot.send_message(message.chat.id, "Отправьте фото или нажмите кнопку")
+    # Загрузка фото - НЕ ПРИНИМАЕМ ТЕКСТ, только фото или кнопки
+    if state == STATE_GET_PHOTOS:
+        bot.send_message(
+            message.chat.id, 
+            "📸 Отправьте ФОТО товара\n\nИли используйте кнопки ниже:",
+            reply_markup=get_photo_upload_keyboard()
+        )
+        return
     
     # Управление
-    elif state == STATE_MANAGEMENT:
+    if state == STATE_MANAGEMENT:
         if text == "🔄 Перезапуск":
             cmd_restart(message)
         elif text == "🔧 Исправить":
@@ -654,9 +664,16 @@ def handle_text(message):
             cmd_logs(message)
         elif text == "⚠️ Ошибки":
             cmd_errors(message)
+        else:
+            bot.send_message(
+                message.chat.id,
+                "Используйте кнопки управления:",
+                reply_markup=get_management_keyboard()
+            )
+        return
     
-    else:
-        bot.send_message(message.chat.id, "Используйте /start для начала работы")
+    # Если состояние неизвестно - показываем главное меню
+    show_main_menu(message)
 
 def start_upload_flow(message):
     """Начать процесс загрузки фото"""
@@ -732,29 +749,46 @@ def finish_upload(message):
 def handle_photo(message):
     """Обработка фото"""
     user_id = message.from_user.id
-    state = user_states.get(user_id, STATE_MENU)
+    state = user_states.get(user_id, STATE_MAIN_MENU)
     
+    # Фото принимаем ТОЛЬКО в состоянии загрузки
     if state == STATE_GET_PHOTOS:
         process_photo(message)
     else:
-        bot.send_message(message.chat.id, "Сначала отправьте код модификации. Используйте /start")
+        # Если пользователь прислал фото не в том состоянии
+        bot.send_message(
+            message.chat.id, 
+            "📸 Сначала выберите товар!\n\nНажмите кнопку ниже:",
+            reply_markup=get_main_menu_keyboard()
+        )
 
 def handle_code_input_text(message, code):
     """Обработка ввода кода модификации"""
     user_id = message.from_user.id
     code = code.strip()
     
-    bot.send_message(message.chat.id, f"🔍 Ищу модификацию с кодом: {code}...")
+    # Показываем что ищем
+    search_msg = bot.send_message(message.chat.id, f"🔍 Ищу товар с кодом: {code}...")
     
     try:
         variant = get_variant_by_code(code)
         
         if not variant:
+            # Удаляем сообщение о поиске
+            try:
+                bot.delete_message(message.chat.id, search_msg.message_id)
+            except:
+                pass
+            
             bot.send_message(
                 message.chat.id, 
-                f"❌ Модификация с кодом '{code}' не найдена.\n\nПопробуйте другой код:",
-                reply_markup=get_code_input_keyboard()
+                f"❌ Товар с кодом **{code}** не найден\n\n"
+                f"Проверьте код и попробуйте еще раз:",
+                reply_markup=get_code_input_keyboard(),
+                parse_mode='Markdown'
             )
+            # Остаемся в состоянии ввода кода
+            user_states[user_id] = STATE_GET_CODE
             return
         
         variant_name = variant.get('name', 'Без названия')
@@ -786,19 +820,25 @@ def handle_code_input_text(message, code):
         })
         user_states[user_id] = STATE_GET_PHOTOS
         
+        # Удаляем сообщение о поиске
+        try:
+            bot.delete_message(message.chat.id, search_msg.message_id)
+        except:
+            pass
+        
         # Формируем сообщение с информацией о фото
         if images_count > 0:
             photos_emoji = "📸" * min(images_count, 5)
-            photos_info = f"📷 **Текущих фото:** {images_count} {photos_emoji}\n\n"
+            photos_info = f"📷 Текущих фото: {images_count} {photos_emoji}\n\n"
         else:
-            photos_info = "📷 **Текущих фото:** нет\n\n"
+            photos_info = "📷 Текущих фото: нет\n\n"
         
         bot.send_message(
             message.chat.id,
-            f"✅ **Найдено:** {variant_name}\n"
+            f"✅ **Найдено:** {variant_name}\n\n"
             f"{photos_info}"
-            f"📸 **Отправьте фото** (можно несколько).\n"
-            f"Когда закончите - нажмите кнопку ниже.",
+            f"📸 **Теперь отправьте фото** (можно несколько)\n\n"
+            f"Когда закончите - нажмите **✅ Завершить**",
             reply_markup=get_photo_upload_keyboard(),
             parse_mode='Markdown'
         )
@@ -807,11 +847,21 @@ def handle_code_input_text(message, code):
         
     except Exception as e:
         logger.error(f"Ошибка при обработке кода {code}: {e}")
+        
+        # Удаляем сообщение о поиске
+        try:
+            bot.delete_message(message.chat.id, search_msg.message_id)
+        except:
+            pass
+        
         bot.send_message(
             message.chat.id, 
-            f"❌ Произошла ошибка при поиске товара. Попробуйте еще раз или обратитесь к администратору.",
+            f"❌ Произошла ошибка при поиске\n\n"
+            f"Попробуйте еще раз или вернитесь в главное меню:",
             reply_markup=get_code_input_keyboard()
         )
+        # Остаемся в состоянии ввода кода
+        user_states[user_id] = STATE_GET_CODE
 
 def process_photo(message):
     """Обработка загруженного фото"""
