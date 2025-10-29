@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.1.0"
+BOT_VERSION = "5.1.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -328,7 +328,7 @@ def get_moysklad_statistics():
                 logger.info(f"Достигнут лимит проверки в 5000 модификаций")
                 break
         
-        return {
+            return {
             'total': total_variants,
             'with_stock': variants_with_stock,
             'with_images': variants_with_images,
@@ -987,7 +987,7 @@ def handle_code_input_text(message, code):
         logger.info(f"Пользователь {message.from_user.username} нашел товар: {variant_name} (код: {code}, фото: {images_count})")
         
     except Exception as e:
-        logger.error(f"Ошибка при обработке кода {code}: {e}")
+        logger.error(f"Ошибка при обработке кода {code}: {e}", exc_info=True)
         
         # Удаляем сообщение о поиске
         try:
@@ -995,11 +995,17 @@ def handle_code_input_text(message, code):
         except:
             pass
         
+        # Показываем РЕАЛЬНУЮ ошибку для отладки
+        error_msg = f"❌ **Ошибка при поиске**\n\n"
+        error_msg += f"Код: `{code}`\n"
+        error_msg += f"Ошибка: `{str(e)}`\n\n"
+        error_msg += f"Попробуйте еще раз или обратитесь к администратору"
+        
         bot.send_message(
             message.chat.id, 
-            f"❌ Произошла ошибка при поиске\n\n"
-            f"Попробуйте еще раз или вернитесь в главное меню:",
-            reply_markup=get_code_input_keyboard()
+            error_msg,
+            reply_markup=get_code_input_keyboard(),
+            parse_mode='Markdown'
         )
         # Остаемся в состоянии ввода кода
         user_states[user_id] = STATE_GET_CODE
