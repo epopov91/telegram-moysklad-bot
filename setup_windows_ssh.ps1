@@ -1,126 +1,144 @@
-# PowerShell скрипт для автоматической настройки SSH на Windows
-# Запустите от имени Администратора!
+# PowerShell script for automatic SSH setup on Windows
+# Run as Administrator!
 
-Write-Host "===========================================`n" -ForegroundColor Cyan
-Write-Host "  SSH Setup для удаленного управления`n" -ForegroundColor Cyan
-Write-Host "===========================================`n" -ForegroundColor Cyan
+Write-Host "==========================================="
+Write-Host "  SSH Setup for Remote Management"
+Write-Host "==========================================="
+Write-Host ""
 
-# Проверка прав администратора
+# Check administrator rights
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "❌ Этот скрипт нужно запустить от имени Администратора!" -ForegroundColor Red
-    Write-Host "`nНажмите Win+X и выберите 'Windows PowerShell (Администратор)'" -ForegroundColor Yellow
+    Write-Host "[ERROR] This script must be run as Administrator!" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Press Win+X and select 'Windows PowerShell (Administrator)'" -ForegroundColor Yellow
     pause
     exit 1
 }
 
-Write-Host "✅ Права администратора подтверждены`n" -ForegroundColor Green
+Write-Host "[OK] Administrator rights confirmed" -ForegroundColor Green
+Write-Host ""
 
-# Установка OpenSSH Server
-Write-Host "📦 Установка OpenSSH Server..." -ForegroundColor Blue
+# Install OpenSSH Server
+Write-Host "Installing OpenSSH Server..." -ForegroundColor Cyan
 try {
     $capability = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
     if ($capability.State -ne "Installed") {
-        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-        Write-Host "✅ OpenSSH Server установлен`n" -ForegroundColor Green
+        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+        Write-Host "[OK] OpenSSH Server installed" -ForegroundColor Green
     } else {
-        Write-Host "✅ OpenSSH Server уже установлен`n" -ForegroundColor Green
+        Write-Host "[OK] OpenSSH Server already installed" -ForegroundColor Green
     }
 } catch {
-    Write-Host "❌ Ошибка при установке OpenSSH: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Failed to install OpenSSH: $_" -ForegroundColor Red
     pause
     exit 1
 }
+Write-Host ""
 
-# Запуск службы SSH
-Write-Host "🚀 Запуск службы SSH..." -ForegroundColor Blue
+# Start SSH service
+Write-Host "Starting SSH service..." -ForegroundColor Cyan
 try {
     Start-Service sshd
-    Write-Host "✅ Служба SSH запущена`n" -ForegroundColor Green
+    Write-Host "[OK] SSH service started" -ForegroundColor Green
 } catch {
-    Write-Host "⚠️  Служба SSH уже запущена или возникла ошибка`n" -ForegroundColor Yellow
+    Write-Host "[WARNING] SSH service already running or error occurred" -ForegroundColor Yellow
 }
+Write-Host ""
 
-# Автозапуск SSH
-Write-Host "⚙️  Настройка автозапуска SSH..." -ForegroundColor Blue
+# Configure SSH autostart
+Write-Host "Configuring SSH autostart..." -ForegroundColor Cyan
 Set-Service -Name sshd -StartupType 'Automatic'
-Write-Host "✅ SSH будет запускаться автоматически`n" -ForegroundColor Green
+Write-Host "[OK] SSH will start automatically" -ForegroundColor Green
+Write-Host ""
 
-# Настройка брандмауэра
-Write-Host "🔥 Настройка брандмауэра..." -ForegroundColor Blue
+# Configure firewall
+Write-Host "Configuring firewall..." -ForegroundColor Cyan
 $firewallRule = Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
 if (-not $firewallRule) {
-    New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
-    Write-Host "✅ Правило брандмауэра создано`n" -ForegroundColor Green
+    New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+    Write-Host "[OK] Firewall rule created" -ForegroundColor Green
 } else {
-    Write-Host "✅ Правило брандмауэра уже существует`n" -ForegroundColor Green
+    Write-Host "[OK] Firewall rule already exists" -ForegroundColor Green
 }
+Write-Host ""
 
-# Получение IP адреса
-Write-Host "===========================================`n" -ForegroundColor Cyan
-Write-Host "  Информация для подключения`n" -ForegroundColor Cyan
-Write-Host "===========================================`n" -ForegroundColor Cyan
+# Get IP address
+Write-Host "==========================================="
+Write-Host "  Connection Information"
+Write-Host "==========================================="
+Write-Host ""
 
 $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*" -and $_.IPAddress -notlike "169.254.*"} | Select-Object -First 1).IPAddress
 $username = $env:USERNAME
 
-Write-Host "IP адрес Windows: " -NoNewline -ForegroundColor Yellow
+Write-Host "Windows IP Address: " -NoNewline -ForegroundColor Yellow
 Write-Host "$ipAddress" -ForegroundColor White
 
-Write-Host "Имя пользователя: " -NoNewline -ForegroundColor Yellow
+Write-Host "Username: " -NoNewline -ForegroundColor Yellow
 Write-Host "$username" -ForegroundColor White
 
-Write-Host "`nПароль: " -NoNewline -ForegroundColor Yellow
-Write-Host "Ваш пароль Windows" -ForegroundColor White
+Write-Host ""
+Write-Host "Password: " -NoNewline -ForegroundColor Yellow
+Write-Host "Your Windows password" -ForegroundColor White
 
-Write-Host "`n⚠️  ВАЖНО: У вашего пользователя должен быть установлен пароль!" -ForegroundColor Red
-Write-Host "Если пароля нет, создайте его через Панель управления > Учетные записи пользователей`n" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "[IMPORTANT] Your Windows user MUST have a password set!" -ForegroundColor Red
+Write-Host "If you don't have a password, create one via Control Panel > User Accounts" -ForegroundColor Yellow
+Write-Host ""
 
-# Проверка Python
-Write-Host "===========================================`n" -ForegroundColor Cyan
-Write-Host "  Проверка дополнительных компонентов`n" -ForegroundColor Cyan
-Write-Host "===========================================`n" -ForegroundColor Cyan
+# Check Python
+Write-Host "==========================================="
+Write-Host "  Checking Additional Components"
+Write-Host "==========================================="
+Write-Host ""
 
-Write-Host "Проверка Python..." -ForegroundColor Blue
+Write-Host "Checking Python..." -ForegroundColor Cyan
 try {
     $pythonVersion = python --version 2>&1
-    Write-Host "✅ Python установлен: $pythonVersion`n" -ForegroundColor Green
+    Write-Host "[OK] Python installed: $pythonVersion" -ForegroundColor Green
 } catch {
-    Write-Host "❌ Python НЕ установлен!" -ForegroundColor Red
-    Write-Host "Скачайте с https://www.python.org/downloads/" -ForegroundColor Yellow
-    Write-Host "⚠️  При установке поставьте галочку 'Add Python to PATH'`n" -ForegroundColor Yellow
+    Write-Host "[ERROR] Python NOT installed!" -ForegroundColor Red
+    Write-Host "Download from https://www.python.org/downloads/" -ForegroundColor Yellow
+    Write-Host "IMPORTANT: Check 'Add Python to PATH' during installation" -ForegroundColor Yellow
 }
+Write-Host ""
 
-# Проверка Git
-Write-Host "Проверка Git..." -ForegroundColor Blue
+# Check Git
+Write-Host "Checking Git..." -ForegroundColor Cyan
 try {
     $gitVersion = git --version 2>&1
-    Write-Host "✅ Git установлен: $gitVersion`n" -ForegroundColor Green
+    Write-Host "[OK] Git installed: $gitVersion" -ForegroundColor Green
 } catch {
-    Write-Host "❌ Git НЕ установлен!" -ForegroundColor Red
-    Write-Host "Скачайте с https://git-scm.com/download/win`n" -ForegroundColor Yellow
+    Write-Host "[ERROR] Git NOT installed!" -ForegroundColor Red
+    Write-Host "Download from https://git-scm.com/download/win" -ForegroundColor Yellow
 }
+Write-Host ""
 
-# Проверка SSH
-Write-Host "Проверка SSH..." -ForegroundColor Blue
+# Check SSH
+Write-Host "Checking SSH..." -ForegroundColor Cyan
 $sshStatus = Get-Service sshd
 if ($sshStatus.Status -eq "Running") {
-    Write-Host "✅ SSH сервис работает!`n" -ForegroundColor Green
+    Write-Host "[OK] SSH service is running!" -ForegroundColor Green
 } else {
-    Write-Host "❌ SSH сервис не запущен!`n" -ForegroundColor Red
+    Write-Host "[ERROR] SSH service is NOT running!" -ForegroundColor Red
 }
+Write-Host ""
 
-Write-Host "===========================================`n" -ForegroundColor Cyan
-Write-Host "  🎉 Настройка завершена!`n" -ForegroundColor Cyan
-Write-Host "===========================================`n" -ForegroundColor Cyan
+Write-Host "==========================================="
+Write-Host "  Setup Complete!"
+Write-Host "==========================================="
+Write-Host ""
 
-Write-Host "Скопируйте данные для подключения:" -ForegroundColor Yellow
+Write-Host "Copy this connection information:" -ForegroundColor Yellow
 Write-Host "IP: $ipAddress" -ForegroundColor White
-Write-Host "Пользователь: $username" -ForegroundColor White
-Write-Host "Пароль: [ваш пароль Windows]`n" -ForegroundColor White
+Write-Host "Username: $username" -ForegroundColor White
+Write-Host "Password: [your Windows password]" -ForegroundColor White
+Write-Host ""
 
-Write-Host "Отправьте эти данные в Cursor AI, и всё будет работать автоматически!`n" -ForegroundColor Green
+Write-Host "Send this information to Cursor AI and everything will work automatically!" -ForegroundColor Green
+Write-Host ""
 
 pause
 
