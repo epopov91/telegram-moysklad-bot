@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.2.0"
+BOT_VERSION = "5.2.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -272,89 +272,57 @@ def get_variant_images(variant_id: str):
 def get_moysklad_statistics():
     """Получение статистики по МойСклад"""
     try:
-        # Получаем общее количество модификаций
         url_variants = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
         headers = {
             'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
             'Accept-Encoding': 'gzip'
         }
         
-        # Запрос с лимитом 0 чтобы получить только meta.size
         response = requests.get(f"{url_variants}?limit=0", headers=headers, timeout=10)
         response.raise_for_status()
-        data = response.json()
-        total_variants = data['meta']['size']
+        total_variants = response.json()['meta']['size']
         logger.info(f"Всего модификаций: {total_variants}")
         
-        # Получаем количество с остатком через отчет
-        # ВАЖНО: поле stock доступно ТОЛЬКО в отчете, НЕ в /entity/variant!
         logger.info("Получаю количество позиций с остатком...")
         url_stock = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
-        
-        response_stock = requests.get(
-            f"{url_stock}?limit=0&stockMode=positiveOnly",
-            headers=headers,
-            timeout=30
-        )
+        response_stock = requests.get(f"{url_stock}?limit=0&stockMode=positiveOnly", headers=headers, timeout=30)
         
         variants_with_stock = 0
         if response_stock.status_code == 200:
             variants_with_stock = response_stock.json()['meta']['size']
             logger.info(f"Позиций с остатком > 0: {variants_with_stock}")
-        else:
-            logger.warning(f"Ошибка получения отчета по остаткам: {response_stock.status_code}")
         
-        # Подсчитываем модификации с фото
         logger.info("Подсчитываю модификации с фото...")
         variants_with_images = 0
         offset = 0
         limit = 100
-        checked = 0
         
-        # Проверяем до 1000 модификаций для скорости
         while offset < min(total_variants, 1000):
-            response_page = requests.get(
-                f"{url_variants}?limit={limit}&offset={offset}", 
-                headers=headers, 
-                timeout=30
-            )
-            
+            response_page = requests.get(f"{url_variants}?limit={limit}&offset={offset}", headers=headers, timeout=30)
             if response_page.status_code != 200:
-                logger.warning(f"Ошибка получения страницы модификаций: {response_page.status_code}")
                 break
-                
+            
             variants = response_page.json().get('rows', [])
             if not variants:
                 break
             
             for variant in variants:
-                # Проверяем наличие images
                 if variant.get('images') and variant['images'].get('meta', {}).get('size', 0) > 0:
                     variants_with_images += 1
             
             offset += limit
-            checked = offset
-            
-            if offset % 300 == 0:
-                logger.info(f"Проверено {offset} модификаций на наличие фото...")
         
-        logger.info(f"Модификаций с фото: {variants_with_images} (проверено {checked})")
+        logger.info(f"Модификаций с фото: {variants_with_images}")
         
         return {
             'total': total_variants,
             'with_stock': variants_with_stock,
             'with_images': variants_with_images,
-            'checked': min(checked, total_variants)
+            'checked': min(offset, total_variants)
         }
-        
     except Exception as e:
         logger.error(f"Ошибка при получении статистики МойСклад: {e}")
-        return {
-            'total': 0,
-            'with_stock': 0,
-            'with_images': 0,
-            'checked': 0
-        }
+        return {'total': 0, 'with_stock': 0, 'with_images': 0, 'checked': 0}
 
 def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, variant_code: str):
     """Загрузка фото к модификации с повторными попытками"""
@@ -952,6 +920,10 @@ def handle_code_input_text(message, code):
             logger.error(f"Ошибка при получении фото: {e}")
             images_count = 0
         
+        # Инициализируем user_data для пользователя если его нет
+        if user_id not in user_data:
+            user_data[user_id] = {}
+        
         # Добавляем код в историю
         if 'history' not in user_data[user_id]:
             user_data[user_id]['history'] = []
@@ -1095,7 +1067,6 @@ def process_photo(message):
             )
             save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
         
-        # Снимаем флаг обработки
         user_processing[user_id] = False
     
     except Exception as e:
