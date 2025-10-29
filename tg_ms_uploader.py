@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.0.2"
+BOT_VERSION = "2.0.3"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -471,17 +471,17 @@ def main() -> None:
     
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Админ-команды (добавляем ПЕРВЫМИ, чтобы они имели приоритет)
-    application.add_handler(CommandHandler('status', cmd_status))
-    application.add_handler(CommandHandler('logs', cmd_logs))
-    application.add_handler(CommandHandler('backup_on', cmd_backup_on))
-    application.add_handler(CommandHandler('backup_off', cmd_backup_off))
-    application.add_handler(CommandHandler('update', cmd_update))
-    application.add_handler(CommandHandler('restart', cmd_restart))
-    application.add_handler(CommandHandler('stop', cmd_stop))
-    application.add_handler(CommandHandler('admin', cmd_help_admin))
+    # Админ-команды (добавляем ПЕРВЫМИ с group=0, чтобы они имели наивысший приоритет)
+    application.add_handler(CommandHandler('admin', cmd_help_admin), group=0)
+    application.add_handler(CommandHandler('status', cmd_status), group=0)
+    application.add_handler(CommandHandler('logs', cmd_logs), group=0)
+    application.add_handler(CommandHandler('backup_on', cmd_backup_on), group=0)
+    application.add_handler(CommandHandler('backup_off', cmd_backup_off), group=0)
+    application.add_handler(CommandHandler('update', cmd_update), group=0)
+    application.add_handler(CommandHandler('restart', cmd_restart), group=0)
+    application.add_handler(CommandHandler('stop', cmd_stop), group=0)
     
-    # Основной conversation handler
+    # Основной conversation handler (group=1, меньший приоритет)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -496,8 +496,8 @@ def main() -> None:
         allow_reentry=True
     )
     
-    # Добавление conversation handler
-    application.add_handler(conv_handler)
+    # Добавление conversation handler в отдельную группу
+    application.add_handler(conv_handler, group=1)
     
     logger.info("Бот запущен и готов к работе!")
     application.run_polling()
