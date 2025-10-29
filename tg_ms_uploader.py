@@ -7,6 +7,8 @@ import os
 import sys
 import subprocess
 import sqlite3
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -37,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.6.0"
+BOT_VERSION = "5.0.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -1073,8 +1075,8 @@ def process_photo(message):
 # ЗАПУСК БОТА
 # =========================
 
-def check_and_update():
-    """Автоматическая проверка и установка обновлений при запуске"""
+def check_and_update(send_notification=False):
+    """Автоматическая проверка и установка обновлений"""
     try:
         logger.info("🔍 Проверка обновлений из GitHub...")
         
@@ -1087,6 +1089,18 @@ def check_and_update():
         if 'Your branch is behind' in result.stdout or 'behind' in result.stdout:
             logger.info("📥 Найдены обновления! Устанавливаю...")
             
+            # Отправляем уведомление если запрошено
+            if send_notification and ADMIN_USER_ID:
+                try:
+                    bot.send_message(
+                        ADMIN_USER_ID,
+                        "🔄 **Обнаружено обновление!**\n\n"
+                        "Устанавливаю обновление и перезапускаю бота...",
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
+            
             # Делаем git pull
             pull_result = subprocess.run(['git', 'pull'], capture_output=True, text=True, timeout=15)
             
@@ -1098,21 +1112,60 @@ def check_and_update():
                 os.execv(sys.executable, [sys.executable] + sys.argv)
             else:
                 logger.error(f"❌ Ошибка при обновлении: {pull_result.stderr}")
+                if send_notification and ADMIN_USER_ID:
+                    try:
+                        bot.send_message(
+                            ADMIN_USER_ID,
+                            f"❌ Ошибка при обновлении:\n```\n{pull_result.stderr}\n```",
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        pass
         else:
             logger.info("✅ Бот уже использует последнюю версию")
             
     except subprocess.TimeoutExpired:
-        logger.warning("⏱ Таймаут при проверке обновлений, продолжаю запуск...")
+        logger.warning("⏱ Таймаут при проверке обновлений, продолжаю работу...")
     except Exception as e:
-        logger.warning(f"⚠️ Не удалось проверить обновления: {e}, продолжаю запуск...")
+        logger.warning(f"⚠️ Не удалось проверить обновления: {e}, продолжаю работу...")
+
+def auto_update_loop():
+    """Фоновая проверка обновлений каждые 30 минут"""
+    while True:
+        try:
+            # Ждем 30 минут (1800 секунд)
+            time.sleep(1800)
+            logger.info("⏰ Плановая проверка обновлений...")
+            check_and_update(send_notification=True)
+        except Exception as e:
+            logger.error(f"Ошибка в фоновой проверке обновлений: {e}")
+            time.sleep(1800)  # Продолжаем проверять даже при ошибках
 
 def main():
-    # Автоматическая проверка обновлений при каждом запуске
-    check_and_update()
+    # Автоматическая проверка обновлений при запуске
+    check_and_update(send_notification=False)
     
     init_database()
     logger.info(f"🚀 Запуск бота версии {BOT_VERSION}")
     logger.info("✅ Бот запущен и готов к работе!")
+    
+    # Запускаем фоновый поток для автообновлений
+    update_thread = threading.Thread(target=auto_update_loop, daemon=True)
+    update_thread.start()
+    logger.info("🔄 Фоновая проверка обновлений запущена (каждые 30 минут)")
+    
+    # Отправляем уведомление администратору о запуске
+    if ADMIN_USER_ID:
+        try:
+            bot.send_message(
+                ADMIN_USER_ID,
+                f"✅ **Бот запущен!**\n\n"
+                f"Версия: {BOT_VERSION}\n"
+                f"Автообновление: включено ✅",
+                parse_mode='Markdown'
+            )
+        except:
+            pass
     
     try:
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
