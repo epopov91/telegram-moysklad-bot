@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "3.1.0"
+BOT_VERSION = "3.2.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -152,6 +152,24 @@ def get_variant_by_code(code: str):
     except Exception as e:
         logger.error(f"Ошибка при поиске модификации {code}: {e}")
         return None
+
+def get_variant_images(variant_id: str):
+    """Получение списка фото модификации"""
+    url = f"https://api.moysklad.ru/api/remap/1.2/entity/variant/{variant_id}/images"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
+        'Accept-Encoding': 'gzip'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
+        return data.get('rows', [])
+    except Exception as e:
+        logger.error(f"Ошибка при получении фото модификации {variant_id}: {e}")
+        return []
 
 def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, variant_code: str):
     """Загрузка фото к модификации"""
@@ -397,21 +415,34 @@ def handle_code_input(message):
     variant_name = variant.get('name', 'Без названия')
     variant_id = variant['id']
     
+    # Получаем текущие фото
+    existing_images = get_variant_images(variant_id)
+    images_count = len(existing_images)
+    
     # Сохраняем данные
     user_data[user_id] = {
         'variant_id': variant_id,
         'variant_code': code,
-        'variant_name': variant_name
+        'variant_name': variant_name,
+        'existing_images_count': images_count
     }
     user_states[user_id] = STATE_GET_PHOTOS
     
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(types.KeyboardButton('✅ Завершить'), types.KeyboardButton('❌ Отмена'))
     
+    # Формируем сообщение с информацией о фото
+    if images_count > 0:
+        photos_emoji = "📸" * min(images_count, 5)  # Максимум 5 эмодзи
+        photos_info = f"📷 **Текущих фото:** {images_count} {photos_emoji}\n\n"
+    else:
+        photos_info = "📷 **Текущих фото:** нет\n\n"
+    
     bot.send_message(
         message.chat.id,
-        f"✅ Найдено: **{variant_name}**\n\n"
-        f"📸 Отправьте фото (можно несколько).\n"
+        f"✅ **Найдено:** {variant_name}\n"
+        f"{photos_info}"
+        f"➕ **Отправьте фото** (можно несколько).\n"
         f"Когда закончите - нажмите '✅ Завершить'",
         reply_markup=keyboard,
         parse_mode='Markdown'
