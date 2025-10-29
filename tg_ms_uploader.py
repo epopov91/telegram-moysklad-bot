@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "3.2.1"
+BOT_VERSION = "3.3.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -266,7 +266,12 @@ def cmd_help(message):
 
 **Мониторинг:**
 /status - Статус бота и статистика
-/logs - Последние логи (для диагностики)
+/logs - Последние 50 строк логов
+/errors - Только ошибки из логов
+
+**Быстрое управление:**
+/fix - Автоматическое исправление и перезапуск
+/shell <команда> - Выполнить команду на сервере
 
 **Управление:**
 /backup_on - Включить сохранение фото на диск
@@ -315,7 +320,30 @@ def cmd_logs(message):
         if len(last_lines) > 4000:
             last_lines = last_lines[-4000:]
         
-        bot.send_message(message.chat.id, f"```\n{last_lines}\n```", parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"📋 **Последние 50 строк:**\n```\n{last_lines}\n```", parse_mode='Markdown')
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка при чтении логов: {e}")
+
+@bot.message_handler(commands=['errors'])
+def cmd_errors(message):
+    """Показать только ошибки из логов"""
+    try:
+        with open('bot.log', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            
+        # Фильтруем только строки с ERROR и WARNING
+        error_lines = [line for line in lines if 'ERROR' in line or 'WARNING' in line]
+        
+        if not error_lines:
+            bot.send_message(message.chat.id, "✅ Ошибок не найдено!")
+            return
+        
+        last_errors = ''.join(error_lines[-30:])  # Последние 30 ошибок
+        
+        if len(last_errors) > 4000:
+            last_errors = last_errors[-4000:]
+        
+        bot.send_message(message.chat.id, f"⚠️ **Ошибки и предупреждения:**\n```\n{last_errors}\n```", parse_mode='Markdown')
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка при чтении логов: {e}")
 
@@ -367,6 +395,76 @@ def cmd_stop(message):
     logger.info(f"Остановка бота по команде {message.from_user.username}")
     bot.stop_polling()
     sys.exit(0)
+
+@bot.message_handler(commands=['fix'])
+def cmd_fix(message):
+    """Автоматическое исправление проблем и перезапуск"""
+    try:
+        bot.send_message(message.chat.id, "🔧 **Автоматическое исправление...**\n\n1️⃣ Обновление кода из GitHub...")
+        
+        # Шаг 1: Git pull
+        result = subprocess.run(['git', 'pull'], capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)))
+        
+        if result.returncode != 0:
+            bot.send_message(message.chat.id, f"❌ Ошибка при обновлении:\n```\n{result.stderr}\n```", parse_mode='Markdown')
+            return
+        
+        bot.send_message(message.chat.id, f"✅ Код обновлен:\n```\n{result.stdout}\n```\n\n2️⃣ Проверка зависимостей...", parse_mode='Markdown')
+        
+        # Шаг 2: Установка зависимостей
+        result = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '--quiet'], 
+                              capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)))
+        
+        if result.returncode == 0:
+            bot.send_message(message.chat.id, "✅ Зависимости проверены\n\n3️⃣ Перезапуск бота...")
+        else:
+            bot.send_message(message.chat.id, f"⚠️ Предупреждение при установке:\n```\n{result.stderr}\n```\n\n3️⃣ Перезапуск бота...", parse_mode='Markdown')
+        
+        logger.info(f"Автоматическое исправление и перезапуск по команде {message.from_user.username}")
+        
+        # Шаг 3: Перезапуск
+        os.execv(sys.executable, ['python'] + sys.argv)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении /fix: {e}")
+        bot.send_message(message.chat.id, f"❌ Критическая ошибка: {e}\n\nПопробуйте /restart")
+
+@bot.message_handler(commands=['shell'])
+def cmd_shell(message):
+    """Выполнение shell команд"""
+    try:
+        # Получаем команду после /shell
+        command = message.text.replace('/shell', '').strip()
+        
+        if not command:
+            bot.send_message(message.chat.id, "❌ Использование: `/shell <команда>`\n\nПример: `/shell dir`", parse_mode='Markdown')
+            return
+        
+        bot.send_message(message.chat.id, f"⚙️ Выполняю: `{command}`", parse_mode='Markdown')
+        
+        # Выполняем команду
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, 
+                              cwd=os.path.dirname(os.path.abspath(__file__)), timeout=30)
+        
+        output = result.stdout if result.stdout else result.stderr
+        
+        if not output:
+            output = "(команда выполнена без вывода)"
+        
+        # Ограничиваем вывод
+        if len(output) > 4000:
+            output = output[-4000:]
+        
+        status = "✅" if result.returncode == 0 else "⚠️"
+        bot.send_message(message.chat.id, f"{status} **Результат:**\n```\n{output}\n```", parse_mode='Markdown')
+        
+        logger.info(f"Команда shell от {message.from_user.username}: {command}")
+        
+    except subprocess.TimeoutExpired:
+        bot.send_message(message.chat.id, "❌ Команда выполнялась слишком долго (timeout 30 сек)")
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении shell команды: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
 # =========================
 # ОБРАБОТКА СОСТОЯНИЙ
