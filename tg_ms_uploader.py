@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.5.0"
+BOT_VERSION = "4.6.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -1073,7 +1073,43 @@ def process_photo(message):
 # ЗАПУСК БОТА
 # =========================
 
+def check_and_update():
+    """Автоматическая проверка и установка обновлений при запуске"""
+    try:
+        logger.info("🔍 Проверка обновлений из GitHub...")
+        
+        # Делаем git fetch
+        subprocess.run(['git', 'fetch'], capture_output=True, text=True, timeout=10)
+        
+        # Проверяем есть ли новые коммиты
+        result = subprocess.run(['git', 'status', '-uno'], capture_output=True, text=True, timeout=5)
+        
+        if 'Your branch is behind' in result.stdout or 'behind' in result.stdout:
+            logger.info("📥 Найдены обновления! Устанавливаю...")
+            
+            # Делаем git pull
+            pull_result = subprocess.run(['git', 'pull'], capture_output=True, text=True, timeout=15)
+            
+            if pull_result.returncode == 0:
+                logger.info(f"✅ Код обновлен успешно!")
+                logger.info("🔄 Перезапуск бота с новой версией...")
+                
+                # Перезапуск с новой версией
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                logger.error(f"❌ Ошибка при обновлении: {pull_result.stderr}")
+        else:
+            logger.info("✅ Бот уже использует последнюю версию")
+            
+    except subprocess.TimeoutExpired:
+        logger.warning("⏱ Таймаут при проверке обновлений, продолжаю запуск...")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось проверить обновления: {e}, продолжаю запуск...")
+
 def main():
+    # Автоматическая проверка обновлений при каждом запуске
+    check_and_update()
+    
     init_database()
     logger.info(f"🚀 Запуск бота версии {BOT_VERSION}")
     logger.info("✅ Бот запущен и готов к работе!")
