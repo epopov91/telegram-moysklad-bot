@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "3.3.0"
+BOT_VERSION = "4.0.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -51,9 +51,77 @@ user_states = {}
 user_data = {}
 
 # Константы состояний
-STATE_MENU = 0
+STATE_MAIN_MENU = 0
 STATE_GET_CODE = 1
 STATE_GET_PHOTOS = 2
+STATE_STATISTICS = 3
+STATE_MANAGEMENT = 4
+
+# Константы кнопок
+BTN_UPLOAD = "📸 Загрузить фото"
+BTN_STATS = "📊 Статистика"
+BTN_MANAGE = "⚙️ Управление"
+BTN_HELP = "ℹ️ Помощь"
+BTN_BACK = "🔙 Главное меню"
+BTN_CANCEL = "❌ Отмена"
+BTN_SEND_PHOTO = "📸 Отправить фото"
+BTN_ANOTHER_CODE = "🔄 Другой код"
+BTN_MORE_PHOTOS = "➕ Еще фото"
+BTN_FINISH = "✅ Завершить"
+BTN_ANOTHER_PRODUCT = "🔄 Другой товар"
+
+# =========================
+# КЛАВИАТУРЫ
+# =========================
+
+def get_main_menu_keyboard():
+    """Главное меню"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(BTN_UPLOAD, BTN_STATS)
+    keyboard.row(BTN_MANAGE, BTN_HELP)
+    return keyboard
+
+def get_code_input_keyboard():
+    """Клавиатура для ввода кода"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(BTN_BACK, BTN_CANCEL)
+    return keyboard
+
+def get_product_info_keyboard():
+    """Клавиатура после нахождения товара"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(BTN_SEND_PHOTO)
+    keyboard.row(BTN_ANOTHER_CODE, BTN_BACK)
+    return keyboard
+
+def get_photo_upload_keyboard():
+    """Клавиатура во время загрузки фото"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(BTN_FINISH)
+    keyboard.row(BTN_ANOTHER_PRODUCT, BTN_BACK)
+    return keyboard
+
+def get_management_keyboard():
+    """Клавиатура управления"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row("🔄 Перезапуск", "🔧 Исправить")
+    keyboard.row("📋 Логи", "⚠️ Ошибки")
+    keyboard.row(BTN_BACK)
+    return keyboard
+
+def get_history_keyboard(user_id):
+    """Клавиатура с историей последних кодов"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    
+    # Получаем историю из user_data
+    history = user_data.get(user_id, {}).get('history', [])
+    
+    # Добавляем кнопки с историей (максимум 5)
+    for code in history[-5:]:
+        keyboard.row(f"🔖 {code}")
+    
+    keyboard.row(BTN_BACK, BTN_CANCEL)
+    return keyboard
 
 # =========================
 # БАЗА ДАННЫХ
@@ -224,21 +292,34 @@ def is_admin(user_id):
 
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
-    """Команда /start"""
+    """Команда /start - показывает главное меню"""
     user_id = message.from_user.id
-    user_states[user_id] = STATE_GET_CODE
-    user_data[user_id] = {}
+    user_states[user_id] = STATE_MAIN_MENU
     
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton('❌ Отмена'))
+    # Инициализируем данные пользователя если нет
+    if user_id not in user_data:
+        user_data[user_id] = {'history': []}
     
     bot.send_message(
         message.chat.id,
-        "👋 Привет! Я бот для загрузки фото в МойСклад.\n\n"
-        "📝 Отправьте код модификации товара:",
-        reply_markup=keyboard
+        "👋 **Привет!** Я бот для загрузки фото в МойСклад.\n\n"
+        "Выберите действие:",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode='Markdown'
     )
-    logger.info(f"Пользователь {message.from_user.username} ({user_id}) начал работу")
+    logger.info(f"Пользователь {message.from_user.username} ({user_id}) открыл главное меню")
+
+def show_main_menu(message):
+    """Показать главное меню"""
+    user_id = message.from_user.id
+    user_states[user_id] = STATE_MAIN_MENU
+    
+    bot.send_message(
+        message.chat.id,
+        "🏠 **Главное меню**\n\nВыберите действие:",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode='Markdown'
+    )
 
 @bot.message_handler(commands=['cancel'])
 def cmd_cancel(message):
@@ -470,21 +551,138 @@ def cmd_shell(message):
 # ОБРАБОТКА СОСТОЯНИЙ
 # =========================
 
-@bot.message_handler(func=lambda message: message.text == '❌ Отмена')
-def handle_cancel_button(message):
-    """Обработка кнопки Отмена"""
-    cmd_cancel(message)
-
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
-    """Обработка текстовых сообщений"""
+    """Обработка текстовых сообщений и кнопок"""
     user_id = message.from_user.id
-    state = user_states.get(user_id, STATE_MENU)
+    text = message.text
+    state = user_states.get(user_id, STATE_MAIN_MENU)
     
-    if state == STATE_GET_CODE:
-        handle_code_input(message)
-    elif state == STATE_MENU:
+    # Обработка универсальных кнопок
+    if text == BTN_BACK or text == BTN_CANCEL or text == "❌ Отмена":
+        show_main_menu(message)
+        return
+    
+    # Обработка кнопок главного меню
+    if state == STATE_MAIN_MENU:
+        if text == BTN_UPLOAD:
+            start_upload_flow(message)
+        elif text == BTN_STATS:
+            show_statistics(message)
+        elif text == BTN_MANAGE:
+            show_management(message)
+        elif text == BTN_HELP:
+            cmd_help(message)
+        else:
+            bot.send_message(message.chat.id, "Используйте кнопки меню для навигации")
+    
+    # Ввод кода модификации
+    elif state == STATE_GET_CODE:
+        # Проверяем, не кнопка ли это
+        if text.startswith("🔖 "):
+            # Это код из истории
+            code = text.replace("🔖 ", "").strip()
+            handle_code_input_text(message, code)
+        elif text == BTN_ANOTHER_CODE:
+            start_upload_flow(message)
+        else:
+            # Обычный ввод кода
+            handle_code_input_text(message, text)
+    
+    # Загрузка фото
+    elif state == STATE_GET_PHOTOS:
+        if text == BTN_FINISH:
+            finish_upload(message)
+        elif text == BTN_ANOTHER_PRODUCT or text == BTN_ANOTHER_CODE:
+            start_upload_flow(message)
+        elif text == BTN_SEND_PHOTO:
+            bot.send_message(message.chat.id, "📸 Отправьте фото товара")
+        else:
+            bot.send_message(message.chat.id, "Отправьте фото или нажмите кнопку")
+    
+    # Управление
+    elif state == STATE_MANAGEMENT:
+        if text == "🔄 Перезапуск":
+            cmd_restart(message)
+        elif text == "🔧 Исправить":
+            cmd_fix(message)
+        elif text == "📋 Логи":
+            cmd_logs(message)
+        elif text == "⚠️ Ошибки":
+            cmd_errors(message)
+    
+    else:
         bot.send_message(message.chat.id, "Используйте /start для начала работы")
+
+def start_upload_flow(message):
+    """Начать процесс загрузки фото"""
+    user_id = message.from_user.id
+    user_states[user_id] = STATE_GET_CODE
+    
+    # Проверяем историю
+    history = user_data.get(user_id, {}).get('history', [])
+    
+    if history:
+        keyboard = get_history_keyboard(user_id)
+        bot.send_message(
+            message.chat.id,
+            "📝 **Введите код модификации** или выберите из истории:\n\n"
+            "Можно ввести код вручную или нажать на один из недавних:",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    else:
+        keyboard = get_code_input_keyboard()
+        bot.send_message(
+            message.chat.id,
+            "📝 **Введите код модификации товара:**",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+
+def show_statistics(message):
+    """Показать статистику"""
+    total_uploads, unique_products = get_upload_stats()
+    
+    bot.send_message(
+        message.chat.id,
+        f"📊 **Статистика загрузок**\n\n"
+        f"📸 Всего фото загружено: {total_uploads}\n"
+        f"🏷 Уникальных товаров: {unique_products}",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode='Markdown'
+    )
+
+def show_management(message):
+    """Показать меню управления"""
+    user_id = message.from_user.id
+    user_states[user_id] = STATE_MANAGEMENT
+    
+    bot.send_message(
+        message.chat.id,
+        "⚙️ **Управление ботом**\n\nВыберите действие:",
+        reply_markup=get_management_keyboard(),
+        parse_mode='Markdown'
+    )
+
+def finish_upload(message):
+    """Завершить загрузку"""
+    user_id = message.from_user.id
+    data = user_data.get(user_id, {})
+    
+    variant_name = data.get('variant_name', 'товара')
+    uploaded_count = data.get('uploaded_count', 0)
+    
+    bot.send_message(
+        message.chat.id,
+        f"✅ **Загрузка завершена!**\n\n"
+        f"Товар: {variant_name}\n"
+        f"Загружено фото: {uploaded_count}",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode='Markdown'
+    )
+    
+    user_states[user_id] = STATE_MAIN_MENU
 
 @bot.message_handler(content_types=['photo', 'document'])
 def handle_photo(message):
@@ -497,10 +695,10 @@ def handle_photo(message):
     else:
         bot.send_message(message.chat.id, "Сначала отправьте код модификации. Используйте /start")
 
-def handle_code_input(message):
+def handle_code_input_text(message, code):
     """Обработка ввода кода модификации"""
     user_id = message.from_user.id
-    code = message.text.strip()
+    code = code.strip()
     
     bot.send_message(message.chat.id, f"🔍 Ищу модификацию с кодом: {code}...")
     
@@ -508,7 +706,11 @@ def handle_code_input(message):
         variant = get_variant_by_code(code)
         
         if not variant:
-            bot.send_message(message.chat.id, f"❌ Модификация с кодом '{code}' не найдена. Попробуйте другой код или /cancel")
+            bot.send_message(
+                message.chat.id, 
+                f"❌ Модификация с кодом '{code}' не найдена.\n\nПопробуйте другой код:",
+                reply_markup=get_code_input_keyboard()
+            )
             return
         
         variant_name = variant.get('name', 'Без названия')
@@ -520,23 +722,29 @@ def handle_code_input(message):
             images_count = len(existing_images)
         except Exception as e:
             logger.error(f"Ошибка при получении фото: {e}")
-            images_count = 0  # Если не удалось получить - считаем что 0
+            images_count = 0
+        
+        # Добавляем код в историю
+        if 'history' not in user_data[user_id]:
+            user_data[user_id]['history'] = []
+        if code not in user_data[user_id]['history']:
+            user_data[user_id]['history'].append(code)
+            # Ограничиваем историю 5 элементами
+            user_data[user_id]['history'] = user_data[user_id]['history'][-5:]
         
         # Сохраняем данные
-        user_data[user_id] = {
+        user_data[user_id].update({
             'variant_id': variant_id,
             'variant_code': code,
             'variant_name': variant_name,
-            'existing_images_count': images_count
-        }
+            'existing_images_count': images_count,
+            'uploaded_count': 0
+        })
         user_states[user_id] = STATE_GET_PHOTOS
-        
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        keyboard.row(types.KeyboardButton('✅ Завершить'), types.KeyboardButton('❌ Отмена'))
         
         # Формируем сообщение с информацией о фото
         if images_count > 0:
-            photos_emoji = "📸" * min(images_count, 5)  # Максимум 5 эмодзи
+            photos_emoji = "📸" * min(images_count, 5)
             photos_info = f"📷 **Текущих фото:** {images_count} {photos_emoji}\n\n"
         else:
             photos_info = "📷 **Текущих фото:** нет\n\n"
@@ -545,9 +753,9 @@ def handle_code_input(message):
             message.chat.id,
             f"✅ **Найдено:** {variant_name}\n"
             f"{photos_info}"
-            f"➕ **Отправьте фото** (можно несколько).\n"
-            f"Когда закончите - нажмите '✅ Завершить'",
-            reply_markup=keyboard,
+            f"📸 **Отправьте фото** (можно несколько).\n"
+            f"Когда закончите - нажмите кнопку ниже.",
+            reply_markup=get_photo_upload_keyboard(),
             parse_mode='Markdown'
         )
         
@@ -555,15 +763,24 @@ def handle_code_input(message):
         
     except Exception as e:
         logger.error(f"Ошибка при обработке кода {code}: {e}")
-        bot.send_message(message.chat.id, f"❌ Произошла ошибка при поиске товара. Попробуйте еще раз или обратитесь к администратору.")
+        bot.send_message(
+            message.chat.id, 
+            f"❌ Произошла ошибка при поиске товара. Попробуйте еще раз или обратитесь к администратору.",
+            reply_markup=get_code_input_keyboard()
+        )
 
 def process_photo(message):
     """Обработка загруженного фото"""
     user_id = message.from_user.id
     data = user_data.get(user_id, {})
     
-    if not data:
-        bot.send_message(message.chat.id, "❌ Данные потеряны. Начните заново с /start")
+    if not data or 'variant_id' not in data:
+        bot.send_message(
+            message.chat.id, 
+            "❌ Данные потеряны. Начните заново:",
+            reply_markup=get_main_menu_keyboard()
+        )
+        user_states[user_id] = STATE_MAIN_MENU
         return
     
     variant_id = data['variant_id']
@@ -590,28 +807,34 @@ def process_photo(message):
         success = upload_photo_to_variant(variant_id, photo_bytes, filename, variant_code)
         
         if success:
-            bot.send_message(message.chat.id, f"✅ Фото '{filename}' успешно загружено!")
+            # Увеличиваем счетчик
+            user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
+            uploaded = user_data[user_id]['uploaded_count']
+            
+            bot.send_message(
+                message.chat.id, 
+                f"✅ Фото '{filename}' загружено!\n\n"
+                f"📸 Загружено фото: {uploaded}\n\n"
+                f"Можете загрузить еще или нажмите '✅ Завершить'",
+                reply_markup=get_photo_upload_keyboard()
+            )
             save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, True)
         else:
-            bot.send_message(message.chat.id, f"❌ Ошибка при загрузке '{filename}'")
+            bot.send_message(
+                message.chat.id, 
+                f"❌ Ошибка при загрузке '{filename}'\n\nПопробуйте другое фото или нажмите '✅ Завершить'",
+                reply_markup=get_photo_upload_keyboard()
+            )
             save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
     
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}")
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        bot.send_message(
+            message.chat.id, 
+            f"❌ Ошибка: {e}\n\nПопробуйте другое фото или нажмите '✅ Завершить'",
+            reply_markup=get_photo_upload_keyboard()
+        )
 
-@bot.message_handler(func=lambda message: message.text == '✅ Завершить')
-def handle_finish_button(message):
-    """Обработка кнопки Завершить"""
-    user_id = message.from_user.id
-    user_states[user_id] = STATE_MENU
-    
-    keyboard = types.ReplyKeyboardRemove()
-    bot.send_message(
-        message.chat.id,
-        "✅ Загрузка завершена!\n\nОтправьте /start для новой загрузки.",
-        reply_markup=keyboard
-    )
 
 # =========================
 # ЗАПУСК БОТА
