@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.0.3"
+BOT_VERSION = "2.0.4"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -492,7 +492,18 @@ def main() -> None:
                 MessageHandler(filters.PHOTO | (filters.Document.IMAGE), photo_handler),
             ],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            # Админ-команды как fallbacks, чтобы они всегда работали
+            CommandHandler('admin', cmd_help_admin),
+            CommandHandler('status', cmd_status),
+            CommandHandler('logs', cmd_logs),
+            CommandHandler('backup_on', cmd_backup_on),
+            CommandHandler('backup_off', cmd_backup_off),
+            CommandHandler('update', cmd_update),
+            CommandHandler('restart', cmd_restart),
+            CommandHandler('stop', cmd_stop),
+        ],
         allow_reentry=True
     )
     
