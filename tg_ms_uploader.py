@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.2.3"
+BOT_VERSION = "4.2.4"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -295,10 +295,10 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
     for attempt in range(3):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
+        response.raise_for_status()
             
             logger.info(f"Фото {filename} успешно загружено для модификации {variant_id}")
-            return True
+        return True
             
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут загрузки фото, попытка {attempt + 1}/3")
@@ -312,8 +312,8 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
                 import time
                 time.sleep(3)
                 continue
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке фото: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фото: {e}")
             break
     
     return False
@@ -668,7 +668,7 @@ def handle_text(message):
             cmd_logs(message)
         elif text == "⚠️ Ошибки":
             cmd_errors(message)
-        else:
+    else:
             bot.send_message(
                 message.chat.id,
                 "Используйте кнопки управления:",
