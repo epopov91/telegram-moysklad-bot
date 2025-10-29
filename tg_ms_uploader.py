@@ -7,6 +7,7 @@ import os
 import sys
 import subprocess
 import sqlite3
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -19,6 +20,10 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
 )
+
+# Исправление для Windows + asyncio event loop
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Загрузка переменных окружения из .env файла
 load_dotenv()
