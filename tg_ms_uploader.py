@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.2.2"
+BOT_VERSION = "4.2.3"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -668,7 +668,7 @@ def handle_text(message):
             cmd_logs(message)
         elif text == "⚠️ Ошибки":
             cmd_errors(message)
-    else:
+        else:
             bot.send_message(
                 message.chat.id,
                 "Используйте кнопки управления:",
