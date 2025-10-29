@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.1.0"
+BOT_VERSION = "4.2.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -49,6 +49,7 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Состояния пользователей
 user_states = {}
 user_data = {}
+user_processing = {}  # Флаг обработки запроса
 
 # Константы состояний
 STATE_MAIN_MENU = 0
@@ -357,6 +358,9 @@ def show_main_menu(message):
     """Показать главное меню"""
     user_id = message.from_user.id
     user_states[user_id] = STATE_MAIN_MENU
+    
+    # Снимаем флаг обработки если был
+    user_processing[user_id] = False
     
     bot.send_message(
         message.chat.id,
@@ -765,7 +769,22 @@ def handle_photo(message):
 def handle_code_input_text(message, code):
     """Обработка ввода кода модификации"""
     user_id = message.from_user.id
+    
+    # ПРОВЕРКА: если уже обрабатывается запрос - игнорируем
+    if user_processing.get(user_id, False):
+        bot.send_message(
+            message.chat.id,
+            "⏳ **Подождите!**\n\nЯ обрабатываю предыдущий запрос.\n"
+            "Дождитесь ответа или нажмите 🔙 для отмены.",
+            parse_mode='Markdown',
+            reply_markup=get_code_input_keyboard()
+        )
+        return
+    
     code = code.strip()
+    
+    # Устанавливаем флаг обработки
+    user_processing[user_id] = True
     
     # Показываем что ищем
     search_msg = bot.send_message(message.chat.id, f"🔍 Ищу товар с кодом: {code}...")
@@ -789,6 +808,8 @@ def handle_code_input_text(message, code):
             )
             # Остаемся в состоянии ввода кода
             user_states[user_id] = STATE_GET_CODE
+            # Снимаем флаг обработки
+            user_processing[user_id] = False
             return
         
         variant_name = variant.get('name', 'Без названия')
@@ -843,6 +864,9 @@ def handle_code_input_text(message, code):
             parse_mode='Markdown'
         )
         
+        # Снимаем флаг обработки
+        user_processing[user_id] = False
+        
         logger.info(f"Пользователь {message.from_user.username} нашел товар: {variant_name} (код: {code}, фото: {images_count})")
         
     except Exception as e:
@@ -862,10 +886,22 @@ def handle_code_input_text(message, code):
         )
         # Остаемся в состоянии ввода кода
         user_states[user_id] = STATE_GET_CODE
+        # Снимаем флаг обработки
+        user_processing[user_id] = False
 
 def process_photo(message):
     """Обработка загруженного фото"""
     user_id = message.from_user.id
+    
+    # ПРОВЕРКА: если уже обрабатывается фото - игнорируем
+    if user_processing.get(user_id, False):
+        bot.send_message(
+            message.chat.id,
+            "⏳ **Подождите!**\n\nЯ загружаю предыдущее фото.\nДождитесь завершения.",
+            parse_mode='Markdown'
+        )
+        return
+    
     data = user_data.get(user_id, {})
     
     if not data or 'variant_id' not in data:
@@ -880,6 +916,9 @@ def process_photo(message):
     variant_id = data['variant_id']
     variant_code = data['variant_code']
     variant_name = data['variant_name']
+    
+    # Устанавливаем флаг обработки
+    user_processing[user_id] = True
     
     try:
         # Получаем файл
@@ -920,6 +959,9 @@ def process_photo(message):
                 reply_markup=get_photo_upload_keyboard()
             )
             save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
+        
+        # Снимаем флаг обработки
+        user_processing[user_id] = False
     
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}")
@@ -928,6 +970,8 @@ def process_photo(message):
             f"❌ Ошибка: {e}\n\nПопробуйте другое фото или нажмите '✅ Завершить'",
             reply_markup=get_photo_upload_keyboard()
         )
+        # Снимаем флаг обработки
+        user_processing[user_id] = False
 
 
 # =========================
