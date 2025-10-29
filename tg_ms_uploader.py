@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.2.1"
+BOT_VERSION = "5.3.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -323,6 +323,45 @@ def get_moysklad_statistics():
     except Exception as e:
         logger.error(f"Ошибка при получении статистики МойСклад: {e}")
         return {'total': 0, 'with_stock': 0, 'with_images': 0, 'checked': 0}
+
+def get_variant_stock(variant_id: str):
+    """Получение товарного остатка по variant_id с повторными попытками"""
+    url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
+        'Accept-Encoding': 'gzip'
+    }
+    
+    params = {
+        'filter': f'variant=https://api.moysklad.ru/api/remap/1.2/entity/variant/{variant_id}'
+    }
+    
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            rows = data.get('rows', [])
+            if rows:
+                # Суммируем stock по всем складам
+                total_stock = sum(row.get('stock', 0) for row in rows)
+                return int(total_stock)
+            else:
+                return 0
+                
+        except requests.exceptions.Timeout:
+            logger.warning(f"Таймаут при получении остатка (попытка {attempt + 1}/3)")
+            if attempt < 2:
+                time.sleep(1)
+        except Exception as e:
+            logger.error(f"Ошибка при получении остатка товара {variant_id}: {e}")
+            if attempt < 2:
+                time.sleep(1)
+            else:
+                return None
+    
+    return None
 
 def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, variant_code: str):
     """Загрузка фото к модификации с повторными попытками"""
@@ -920,6 +959,9 @@ def handle_code_input_text(message, code):
             logger.error(f"Ошибка при получении фото: {e}")
             images_count = 0
         
+        # Получаем товарный остаток
+        stock = get_variant_stock(variant_id)
+        
         # Инициализируем user_data для пользователя если его нет
         if user_id not in user_data:
             user_data[user_id] = {}
@@ -951,14 +993,24 @@ def handle_code_input_text(message, code):
         # Формируем сообщение с информацией о фото
         if images_count > 0:
             photos_emoji = "📸" * min(images_count, 5)
-            photos_info = f"📷 Текущих фото: {images_count} {photos_emoji}\n\n"
+            photos_info = f"📷 Текущих фото: {images_count} {photos_emoji}\n"
         else:
-            photos_info = "📷 Текущих фото: нет\n\n"
+            photos_info = "📷 Текущих фото: нет\n"
+        
+        # Добавляем информацию об остатках
+        if stock is not None:
+            if stock > 0:
+                stock_info = f"📦 Товарный остаток: **{stock} шт.**\n\n"
+            else:
+                stock_info = f"⚠️ Товарный остаток: **0 шт.**\n\n"
+        else:
+            stock_info = ""
         
         bot.send_message(
             message.chat.id,
             f"✅ **Найдено:** {variant_name}\n\n"
             f"{photos_info}"
+            f"{stock_info}"
             f"📸 **Теперь отправьте фото** (можно несколько)\n\n"
             f"Когда закончите - нажмите **✅ Завершить**",
             reply_markup=get_photo_upload_keyboard(),
