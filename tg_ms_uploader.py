@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.0.0"
+BOT_VERSION = "5.1.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -482,7 +482,8 @@ def cmd_help(message):
 **Управление:**
 /backup_on - Включить сохранение фото на диск
 /backup_off - Выключить сохранение фото
-/restart - Перезапустить бота
+/restart - Обычный перезапуск бота
+/reboot - Экстренный перезапуск (если завис)
 /update - Обновить бота из GitHub
 /stop - Остановить бота
 
@@ -590,8 +591,27 @@ def cmd_update(message):
 @bot.message_handler(commands=['restart'])
 def cmd_restart(message):
     """Перезапуск бота"""
-    bot.send_message(message.chat.id, "🔄 Перезапуск бота...")
+    bot.send_message(message.chat.id, "🔄 **Перезапускаю бота...**\n\nПодождите 5-10 секунд", parse_mode='Markdown')
     logger.info(f"Перезапуск бота по команде {message.from_user.username}")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+@bot.message_handler(commands=['reboot'])
+def cmd_reboot(message):
+    """Экстренный перезапуск с очисткой"""
+    bot.send_message(
+        message.chat.id, 
+        "🆘 **Экстренный перезапуск!**\n\n"
+        "Очищаю состояния и перезапускаю...",
+        parse_mode='Markdown'
+    )
+    logger.warning(f"ЭКСТРЕННЫЙ перезапуск по команде {message.from_user.username}")
+    
+    # Очищаем все состояния
+    user_states.clear()
+    user_data.clear()
+    user_processing.clear()
+    
+    # Перезапуск
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 @bot.message_handler(commands=['stop'])
