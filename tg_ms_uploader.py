@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.3.0"
+BOT_VERSION = "4.4.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -266,6 +266,79 @@ def get_variant_images(variant_id: str):
             break
     
     return []
+
+def get_moysklad_statistics():
+    """Получение статистики по МойСклад"""
+    try:
+        # Получаем общее количество модификаций
+        url_variants = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
+        headers = {
+            'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
+            'Accept-Encoding': 'gzip'
+        }
+        
+        # Запрос с лимитом 0 чтобы получить только meta.size
+        response = requests.get(f"{url_variants}?limit=0", headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        total_variants = data['meta']['size']
+        
+        # Получаем модификации с остатком (stock > 0)
+        # Используем фильтр по остаткам
+        response_stock = requests.get(
+            f"{url_variants}?limit=0&filter=stock>0", 
+            headers=headers, 
+            timeout=10
+        )
+        variants_with_stock = 0
+        if response_stock.status_code == 200:
+            variants_with_stock = response_stock.json()['meta']['size']
+        
+        # Для подсчета модификаций с фото нужно проверить каждую
+        # Это долго, поэтому делаем выборку по страницам
+        variants_with_images = 0
+        offset = 0
+        limit = 100
+        
+        while offset < min(total_variants, 1000):  # Ограничим 1000 для скорости
+            response_page = requests.get(
+                f"{url_variants}?limit={limit}&offset={offset}", 
+                headers=headers, 
+                timeout=10
+            )
+            if response_page.status_code != 200:
+                break
+                
+            variants = response_page.json().get('rows', [])
+            if not variants:
+                break
+            
+            for variant in variants:
+                # Проверяем наличие images
+                if variant.get('images') and variant['images'].get('meta', {}).get('size', 0) > 0:
+                    variants_with_images += 1
+            
+            offset += limit
+            
+            # Если проверили все модификации
+            if offset >= total_variants:
+                break
+        
+        return {
+            'total': total_variants,
+            'with_stock': variants_with_stock,
+            'with_images': variants_with_images,
+            'checked': min(offset, total_variants)
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики МойСклад: {e}")
+        return {
+            'total': 0,
+            'with_stock': 0,
+            'with_images': 0,
+            'checked': 0
+        }
 
 def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, variant_code: str):
     """Загрузка фото к модификации с повторными попытками"""
@@ -707,13 +780,33 @@ def start_upload_flow(message):
 
 def show_statistics(message):
     """Показать статистику"""
+    # Статистика загрузок
     total_uploads, unique_products = get_upload_stats()
     
+    # Отправляем первое сообщение
     bot.send_message(
         message.chat.id,
         f"📊 **Статистика загрузок**\n\n"
         f"📸 Всего фото загружено: {total_uploads}\n"
-        f"🏷 Уникальных товаров: {unique_products}",
+        f"🏷 Уникальных товаров: {unique_products}\n\n"
+        f"⏳ Загружаю данные из МойСклад...",
+        parse_mode='Markdown'
+    )
+    
+    # Получаем статистику из МойСклад (это может занять время)
+    ms_stats = get_moysklad_statistics()
+    
+    stats_text = f"📊 **Статистика МойСклад**\n\n"
+    stats_text += f"📦 Всего модификаций: {ms_stats['total']}\n"
+    stats_text += f"✅ С товарным остатком: {ms_stats['with_stock']}\n"
+    stats_text += f"📸 С фотографиями: {ms_stats['with_images']}"
+    
+    if ms_stats['checked'] < ms_stats['total']:
+        stats_text += f"\n\n⚠️ Проверено: {ms_stats['checked']} из {ms_stats['total']}"
+    
+    bot.send_message(
+        message.chat.id,
+        stats_text,
         reply_markup=get_main_menu_keyboard(),
         parse_mode='Markdown'
     )
