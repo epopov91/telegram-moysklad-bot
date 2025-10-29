@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "4.0.0"
+BOT_VERSION = "4.0.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -202,76 +202,120 @@ def save_photo_backup(variant_code, filename, photo_bytes):
 # =========================
 
 def get_variant_by_code(code: str):
-    """Поиск модификации по коду"""
+    """Поиск модификации по коду с повторными попытками"""
     url = f"https://api.moysklad.ru/api/remap/1.2/entity/variant?filter=code={code}"
     headers = {
         'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
         'Accept-Encoding': 'gzip'
     }
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get('rows'):
-            return data['rows'][0]
-        return None
-    except Exception as e:
-        logger.error(f"Ошибка при поиске модификации {code}: {e}")
-        return None
+    # Пробуем 3 раза с паузой
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('rows'):
+                return data['rows'][0]
+            return None
+            
+        except requests.exceptions.Timeout:
+            logger.warning(f"Таймаут при поиске {code}, попытка {attempt + 1}/3")
+            if attempt < 2:
+                import time
+                time.sleep(1)
+                continue
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Ошибка подключения при поиске {code}, попытка {attempt + 1}/3: {e}")
+            if attempt < 2:
+                import time
+                time.sleep(2)
+                continue
+        except Exception as e:
+            logger.error(f"Ошибка при поиске модификации {code}: {e}")
+            break
+    
+    return None
 
 def get_variant_images(variant_id: str):
-    """Получение списка фото модификации"""
+    """Получение списка фото модификации с повторными попытками"""
     url = f"https://api.moysklad.ru/api/remap/1.2/entity/variant/{variant_id}/images"
     headers = {
         'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
         'Accept-Encoding': 'gzip'
     }
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        return data.get('rows', [])
-    except Exception as e:
-        logger.error(f"Ошибка при получении фото модификации {variant_id}: {e}")
-        return []
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            return data.get('rows', [])
+            
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            logger.warning(f"Ошибка при получении фото, попытка {attempt + 1}/3: {e}")
+            if attempt < 2:
+                import time
+                time.sleep(1)
+                continue
+        except Exception as e:
+            logger.error(f"Ошибка при получении фото модификации {variant_id}: {e}")
+            break
+    
+    return []
 
 def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, variant_code: str):
-    """Загрузка фото к модификации"""
+    """Загрузка фото к модификации с повторными попытками"""
     url = f"https://api.moysklad.ru/api/remap/1.2/entity/variant/{variant_id}/images"
     headers = {
         'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
         'Content-Type': 'application/json'
     }
     
-    try:
-        # Сохраняем бэкап если включено
-        save_photo_backup(variant_code, filename, photo_bytes)
-        
-        # Кодируем фото в base64
-        photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
-        
-        # Определяем тип файла
-        mime_type, _ = mimetypes.guess_type(filename)
-        if not mime_type or not mime_type.startswith('image/'):
-            mime_type = 'image/jpeg'
-        
-        payload = {
-            'filename': filename,
-            'content': photo_base64
-        }
-        
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        
-        logger.info(f"Фото {filename} успешно загружено для модификации {variant_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка при загрузке фото: {e}")
-        return False
+    # Сохраняем бэкап если включено
+    save_photo_backup(variant_code, filename, photo_bytes)
+    
+    # Кодируем фото в base64
+    photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+    
+    # Определяем тип файла
+    mime_type, _ = mimetypes.guess_type(filename)
+    if not mime_type or not mime_type.startswith('image/'):
+        mime_type = 'image/jpeg'
+    
+    payload = {
+        'filename': filename,
+        'content': photo_base64
+    }
+    
+    # Пробуем 3 раза
+    for attempt in range(3):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            
+            logger.info(f"Фото {filename} успешно загружено для модификации {variant_id}")
+            return True
+            
+        except requests.exceptions.Timeout:
+            logger.warning(f"Таймаут загрузки фото, попытка {attempt + 1}/3")
+            if attempt < 2:
+                import time
+                time.sleep(2)
+                continue
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Ошибка подключения при загрузке фото, попытка {attempt + 1}/3: {e}")
+            if attempt < 2:
+                import time
+                time.sleep(3)
+                continue
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке фото: {e}")
+            break
+    
+    return False
 
 # =========================
 # ПРОВЕРКА АДМИНА
