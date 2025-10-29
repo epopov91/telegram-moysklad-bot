@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.0.4"
+BOT_VERSION = "2.0.5"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -323,7 +323,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status - показывает статус бота"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
-        return
+        return ConversationHandler.END
     
     uptime = datetime.now() - BOT_START_TIME
     hours, remainder = divmod(int(uptime.total_seconds()), 3600)
@@ -343,6 +343,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Все системы в норме! ✅
 """
     await update.message.reply_text(status_msg)
+    # Возвращаем текущее состояние, чтобы не выходить из диалога
+    return context.user_data.get('state', MENU)
 
 async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /logs - показывает последние логи"""
@@ -444,7 +446,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /admin - показывает список админ-команд"""
     if not is_admin(update.effective_user.id):
-        return
+        return ConversationHandler.END
     
     help_text = """
 🔧 Админ-команды:
@@ -463,6 +465,8 @@ async def cmd_help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /cancel - Отменить текущую операцию
 """
     await update.message.reply_text(help_text)
+    # Возвращаем текущее состояние
+    return context.user_data.get('state', MENU)
 
 def main() -> None:
     # Инициализация базы данных
