@@ -19,7 +19,13 @@ timeout /t 2 >nul
 echo.
 
 :: Переход в папку проекта
-cd /d "%~dp0"
+cd /d "%USERPROFILE%\Documents\telegram-moysklad-bot"
+if errorlevel 1 (
+    echo [ERROR] Папка проекта не найдена!
+    echo Ожидаемый путь: %USERPROFILE%\Documents\telegram-moysklad-bot
+    pause
+    exit /b 1
+)
 
 :: Обновление кода
 echo [2/3] Обновление кода из GitHub...

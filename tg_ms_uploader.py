@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.0.5"
+BOT_VERSION = "2.1.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -485,30 +485,32 @@ def main() -> None:
     application.add_handler(CommandHandler('restart', cmd_restart), group=0)
     application.add_handler(CommandHandler('stop', cmd_stop), group=0)
     
+    # Админ-команды handlers для использования во всех states
+    admin_handlers = [
+        CommandHandler('admin', cmd_help_admin),
+        CommandHandler('status', cmd_status),
+        CommandHandler('logs', cmd_logs),
+        CommandHandler('backup_on', cmd_backup_on),
+        CommandHandler('backup_off', cmd_backup_off),
+        CommandHandler('update', cmd_update),
+        CommandHandler('restart', cmd_restart),
+        CommandHandler('stop', cmd_stop),
+    ]
+    
     # Основной conversation handler (group=1, меньший приоритет)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            GET_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
-            GET_PHOTOS: [MessageHandler(filters.PHOTO | (filters.Document.IMAGE), photo_handler)],
-            MENU: [
+            GET_CODE: admin_handlers + [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
+            GET_PHOTOS: admin_handlers + [MessageHandler(filters.PHOTO | (filters.Document.IMAGE), photo_handler)],
+            MENU: admin_handlers + [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, menu_handler),
                 MessageHandler(filters.PHOTO | (filters.Document.IMAGE), photo_handler),
             ],
         },
-        fallbacks=[
-            CommandHandler('cancel', cancel),
-            # Админ-команды как fallbacks, чтобы они всегда работали
-            CommandHandler('admin', cmd_help_admin),
-            CommandHandler('status', cmd_status),
-            CommandHandler('logs', cmd_logs),
-            CommandHandler('backup_on', cmd_backup_on),
-            CommandHandler('backup_off', cmd_backup_off),
-            CommandHandler('update', cmd_update),
-            CommandHandler('restart', cmd_restart),
-            CommandHandler('stop', cmd_stop),
-        ],
-        allow_reentry=True
+        fallbacks=[CommandHandler('cancel', cancel)],
+        allow_reentry=True,
+        per_message=False  # Важно! Позволяет командам работать независимо от состояния
     )
     
     # Добавление conversation handler в отдельную группу
