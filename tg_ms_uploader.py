@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "2.0.1"
+BOT_VERSION = "2.0.2"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -429,6 +429,18 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Перезапуск бота
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /stop - останавливает бота"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+    
+    await update.message.reply_text("🛑 Остановка бота...\n\nДля запуска снова выполните на Windows:\npython tg_ms_uploader.py")
+    logger.info(f"Остановка инициирована пользователем {update.effective_user.id}")
+    
+    # Остановка бота
+    sys.exit(0)
+
 async def cmd_help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /admin - показывает список админ-команд"""
     if not is_admin(update.effective_user.id):
@@ -443,6 +455,7 @@ async def cmd_help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /backup_off - Выключить сохранение фото
 /update - Обновить код из GitHub и перезапустить
 /restart - Перезапустить бота
+/stop - Остановить бота
 /admin - Эта справка
 
 🎯 Основные команды:
@@ -465,6 +478,7 @@ def main() -> None:
     application.add_handler(CommandHandler('backup_off', cmd_backup_off))
     application.add_handler(CommandHandler('update', cmd_update))
     application.add_handler(CommandHandler('restart', cmd_restart))
+    application.add_handler(CommandHandler('stop', cmd_stop))
     application.add_handler(CommandHandler('admin', cmd_help_admin))
     
     # Основной conversation handler
