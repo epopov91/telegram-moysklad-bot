@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.7.0"
+BOT_VERSION = "5.7.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -861,6 +861,21 @@ def cmd_shell(message):
 # ОБРАБОТКА СОСТОЯНИЙ
 # =========================
 
+# Обработчик кликабельных кодов (должен быть ПЕРЕД handle_text!)
+@bot.message_handler(func=lambda message: message.text and message.text.startswith('/') and message.text[1:].isdigit() and len(message.text) == 6)
+def handle_product_code_command(message):
+    """Обработка кликабельных кодов товаров вида /00005"""
+    user_id = message.from_user.id
+    code = message.text[1:]  # Убираем слеш
+    
+    # Переводим в состояние поиска кода
+    user_states[user_id] = STATE_GET_CODE
+    
+    logger.info(f"Пользователь {message.from_user.username} кликнул на код: {code}")
+    
+    # Обрабатываем как обычный ввод кода
+    handle_code_input_text(message, code)
+
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     """Обработка текстовых сообщений и кнопок"""
@@ -1218,20 +1233,6 @@ def handle_photo(message):
             "📸 Сначала выберите товар!\n\nНажмите кнопку ниже:",
             reply_markup=get_main_menu_keyboard()
         )
-
-@bot.message_handler(func=lambda message: message.text and message.text.startswith('/') and message.text[1:].isdigit() and len(message.text) == 6)
-def handle_product_code_command(message):
-    """Обработка кликабельных кодов товаров вида /00005"""
-    user_id = message.from_user.id
-    code = message.text[1:]  # Убираем слеш
-    
-    # Переводим в состояние поиска кода
-    user_states[user_id] = STATE_GET_CODE
-    
-    logger.info(f"Пользователь {message.from_user.username} кликнул на код: {code}")
-    
-    # Обрабатываем как обычный ввод кода
-    handle_code_input_text(message, code)
 
 def handle_code_input_text(message, code):
     """Обработка ввода кода модификации"""
