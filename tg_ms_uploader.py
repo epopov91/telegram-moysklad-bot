@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.3.1"
+BOT_VERSION = "5.4.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -52,6 +52,8 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 user_states = {}
 user_data = {}
 user_processing = {}  # Флаг обработки запроса
+user_photo_queue = {}  # Очередь фотографий для каждого пользователя
+user_queue_processing = {}  # Флаг обработки очереди
 
 # Константы состояний
 STATE_MAIN_MENU = 0
@@ -1058,17 +1060,8 @@ def handle_code_input_text(message, code):
         user_processing[user_id] = False
 
 def process_photo(message):
-    """Обработка загруженного фото"""
+    """Обработка загруженного фото - добавление в очередь"""
     user_id = message.from_user.id
-    
-    # ПРОВЕРКА: если уже обрабатывается фото - игнорируем
-    if user_processing.get(user_id, False):
-        bot.send_message(
-            message.chat.id,
-            "⏳ **Подождите!**\n\nЯ загружаю предыдущее фото.\nДождитесь завершения.",
-            parse_mode='Markdown'
-        )
-        return
     
     data = user_data.get(user_id, {})
     
@@ -1081,64 +1074,127 @@ def process_photo(message):
         user_states[user_id] = STATE_MAIN_MENU
         return
     
-    variant_id = data['variant_id']
-    variant_code = data['variant_code']
-    variant_name = data['variant_name']
+    # Инициализируем очередь если её нет
+    if user_id not in user_photo_queue:
+        user_photo_queue[user_id] = []
     
-    # Устанавливаем флаг обработки
-    user_processing[user_id] = True
+    # Добавляем фото в очередь
+    user_photo_queue[user_id].append(message)
+    queue_size = len(user_photo_queue[user_id])
     
+    logger.info(f"Фото добавлено в очередь пользователя {user_id}. Размер очереди: {queue_size}")
+    
+    # Отправляем подтверждение
+    bot.send_message(
+        message.chat.id,
+        f"📥 Фото принято! В очереди: {queue_size}",
+        parse_mode='Markdown'
+    )
+    
+    # Запускаем обработку очереди если она еще не запущена
+    if not user_queue_processing.get(user_id, False):
+        user_queue_processing[user_id] = True
+        # Запускаем обработку в отдельном потоке
+        thread = threading.Thread(target=process_photo_queue, args=(user_id,))
+        thread.daemon = True
+        thread.start()
+
+def process_photo_queue(user_id):
+    """Обработка очереди фотографий пользователя"""
     try:
-        # Получаем файл
-        if message.content_type == 'photo':
-            file_id = message.photo[-1].file_id
-            file_info = bot.get_file(file_id)
-            filename = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        else:  # document
-            file_id = message.document.file_id
-            file_info = bot.get_file(file_id)
-            filename = message.document.file_name
-        
-        # Скачиваем файл
-        photo_bytes = bot.download_file(file_info.file_path)
-        
-        # Загружаем в МойСклад
-        bot.send_message(message.chat.id, f"⏳ Загружаю '{filename}'...")
-        
-        success = upload_photo_to_variant(variant_id, photo_bytes, filename, variant_code)
-        
-        if success:
-            # Увеличиваем счетчик
-            user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
-            uploaded = user_data[user_id]['uploaded_count']
+        while user_id in user_photo_queue and len(user_photo_queue[user_id]) > 0:
+            # Берем первое фото из очереди
+            message = user_photo_queue[user_id].pop(0)
+            remaining = len(user_photo_queue[user_id])
             
-            bot.send_message(
-                message.chat.id, 
-                f"✅ Фото '{filename}' загружено!\n\n"
-                f"📸 Загружено фото: {uploaded}\n\n"
-                f"Можете загрузить еще или нажмите '✅ Завершить'",
-                reply_markup=get_photo_upload_keyboard()
-            )
-            save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, True)
-        else:
-            bot.send_message(
-                message.chat.id, 
-                f"❌ Ошибка при загрузке '{filename}'\n\nПопробуйте другое фото или нажмите '✅ Завершить'",
-                reply_markup=get_photo_upload_keyboard()
-            )
-            save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
+            data = user_data.get(user_id, {})
+            if not data or 'variant_id' not in data:
+                bot.send_message(
+                    message.chat.id,
+                    "❌ Данные потеряны. Начните заново:",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                user_states[user_id] = STATE_MAIN_MENU
+                break
+            
+            variant_id = data['variant_id']
+            variant_code = data['variant_code']
+            variant_name = data['variant_name']
+            
+            try:
+                # Получаем файл
+                if message.content_type == 'photo':
+                    file_id = message.photo[-1].file_id
+                    file_info = bot.get_file(file_id)
+                    filename = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                else:  # document
+                    file_id = message.document.file_id
+                    file_info = bot.get_file(file_id)
+                    filename = message.document.file_name
+                
+                # Скачиваем файл
+                photo_bytes = bot.download_file(file_info.file_path)
+                
+                # Показываем прогресс
+                progress_msg = f"⏳ Загружаю '{filename}'..."
+                if remaining > 0:
+                    progress_msg += f"\n📋 Осталось в очереди: {remaining}"
+                
+                bot.send_message(message.chat.id, progress_msg)
+                
+                # Загружаем в МойСклад
+                success = upload_photo_to_variant(variant_id, photo_bytes, filename, variant_code)
+                
+                if success:
+                    # Увеличиваем счетчик
+                    user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
+                    uploaded = user_data[user_id]['uploaded_count']
+                    
+                    result_msg = f"✅ Фото '{filename}' загружено!\n\n"
+                    result_msg += f"📸 Загружено фото: {uploaded}"
+                    
+                    if remaining > 0:
+                        result_msg += f"\n⏳ Обрабатываю следующее ({remaining} в очереди)..."
+                    else:
+                        result_msg += f"\n\nМожете загрузить еще или нажмите '✅ Завершить'"
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        result_msg,
+                        reply_markup=get_photo_upload_keyboard() if remaining == 0 else None
+                    )
+                    save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, True)
+                else:
+                    bot.send_message(
+                        message.chat.id,
+                        f"❌ Ошибка при загрузке '{filename}'\n"
+                        f"{'⏳ Обрабатываю следующее...' if remaining > 0 else 'Попробуйте другое фото'}",
+                        reply_markup=get_photo_upload_keyboard() if remaining == 0 else None
+                    )
+                    save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
+                
+                # Небольшая пауза между загрузками
+                if remaining > 0:
+                    time.sleep(0.5)
+            
+            except Exception as e:
+                logger.error(f"Ошибка при обработке фото из очереди: {e}")
+                bot.send_message(
+                    message.chat.id,
+                    f"❌ Ошибка: {e}\n"
+                    f"{'⏳ Обрабатываю следующее...' if remaining > 0 else 'Попробуйте другое фото'}",
+                    reply_markup=get_photo_upload_keyboard() if remaining == 0 else None
+                )
         
-        user_processing[user_id] = False
-    
-    except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {e}")
-        bot.send_message(
-            message.chat.id, 
-            f"❌ Ошибка: {e}\n\nПопробуйте другое фото или нажмите '✅ Завершить'",
-            reply_markup=get_photo_upload_keyboard()
-        )
+        # Очередь обработана
+        logger.info(f"Очередь пользователя {user_id} обработана полностью")
+        
+    finally:
         # Снимаем флаг обработки
-        user_processing[user_id] = False
+        user_queue_processing[user_id] = False
+        # Очищаем пустую очередь
+        if user_id in user_photo_queue and len(user_photo_queue[user_id]) == 0:
+            del user_photo_queue[user_id]
 
 
 # =========================
