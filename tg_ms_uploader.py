@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.5.3"
+BOT_VERSION = "5.6.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -888,7 +888,7 @@ def handle_text(message):
         elif text == BTN_STATS:
             show_statistics(message)
         elif text == BTN_NO_PHOTO:
-            show_products_without_photos(message)
+            show_no_photo_menu(message)
         elif text == BTN_MANAGE:
             show_management(message)
         elif text == BTN_HELP:
@@ -1028,14 +1028,36 @@ def show_statistics(message):
         reply_markup=get_main_menu_keyboard()
     )
 
-def show_products_without_photos(message, with_stock_only=True):
-    """Показать список товаров без фото"""
+def show_no_photo_menu(message):
+    """Показать меню выбора формата выгрузки товаров без фото"""
     user_id = message.from_user.id
     user_states[user_id] = STATE_NO_PHOTO_LIST
     
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        types.InlineKeyboardButton("📄 Просмотр списка", callback_data="no_photo:view:stock"),
+        types.InlineKeyboardButton("💾 Скачать CSV", callback_data="no_photo:csv:stock"),
+        types.InlineKeyboardButton("🔙 Главное меню", callback_data="no_photo:back")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        "📋 **ТОВАРЫ БЕЗ ФОТО**\n\n"
+        "Выберите формат выгрузки:\n\n"
+        "📄 **Просмотр списка** - интерактивный список с кликабельными кодами\n"
+        "💾 **Скачать CSV** - файл для работы в Excel/Google Sheets",
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+
+def show_products_without_photos(message, page=0, with_stock_only=True):
+    """Показать страницу товаров без фото с inline-кнопками"""
+    user_id = message.from_user.id if hasattr(message, 'from_user') else message.chat.id
+    chat_id = message.chat.id
+    
     # Отправляем сообщение о загрузке
     loading_msg = bot.send_message(
-        message.chat.id,
+        chat_id,
         "⏳ **Загружаю список товаров без фото...**\n\n"
         "Это может занять 30-60 секунд...",
         parse_mode='Markdown'
@@ -1047,118 +1069,106 @@ def show_products_without_photos(message, with_stock_only=True):
         
         # Удаляем сообщение о загрузке
         try:
-            bot.delete_message(message.chat.id, loading_msg.message_id)
+            bot.delete_message(chat_id, loading_msg.message_id)
         except:
             pass
         
         if not variants:
             bot.send_message(
-                message.chat.id,
+                chat_id,
                 "✅ **Отлично!**\n\nВсе товары с остатком уже имеют фотографии! 🎉",
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode='Markdown'
             )
             return
         
-        # Формируем текст списка
-        total_count = len(variants)
-        filter_text = "✅ С остатком > 0" if with_stock_only else "📦 Все товары"
-        
-        # Формируем сообщения (макс 4096 символов на сообщение)
-        messages = []
-        current_message = f"📋 **ТОВАРЫ БЕЗ ФОТО**\n\n"
-        current_message += f"Фильтр: {filter_text} | Всего: **{total_count}** шт.\n"
-        current_message += f"Сортировка: По коду ↑\n\n"
-        current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        item_number = 1
-        for variant in variants:
-            code = variant['code'] or 'Н/Д'
-            name = variant['name'][:80]  # Ограничиваем длину названия
-            stock = variant['stock']
-            
-            # Форматируем строку
-            line = f"**{code}** ({stock}) {name}\n"
-            
-            # Проверяем не превысим ли лимит
-            if len(current_message) + len(line) > 4000:  # Оставляем запас
-                messages.append(current_message)
-                current_message = f"📋 **ТОВАРЫ БЕЗ ФОТО** (продолжение)\n\n"
-            
-            current_message += line
-            item_number += 1
-        
-        # Добавляем последнее сообщение
-        if current_message:
-            messages.append(current_message)
-        
-        # Отправляем сообщения
-        for i, msg_text in enumerate(messages):
-            if i == len(messages) - 1:
-                # В последнем сообщении добавляем итог и кнопки
-                msg_text += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                msg_text += f"💡 **Для загрузки фото** введите код или нажмите кнопку ниже\n"
-                msg_text += f"📌 Кнопки показывают ТОП-10 товаров с наибольшим остатком\n"
-                
-                # Создаем inline-кнопки для топ-10 товаров (по остатку, самые приоритетные)
-                keyboard = types.InlineKeyboardMarkup(row_width=5)
-                # Сортируем копию по остатку для кнопок (самые важные товары)
-                top_variants = sorted(variants, key=lambda x: x['stock'], reverse=True)[:min(10, len(variants))]
-                buttons = []
-                
-                for v in top_variants:
-                    if v['code']:
-                        btn = types.InlineKeyboardButton(
-                            text=f"{v['code']} ({v['stock']})",  # Показываем код + остаток
-                            callback_data=f"select_code:{v['code']}"
-                        )
-                        buttons.append(btn)
-                
-                # Добавляем кнопки по 5 в ряд
-                for j in range(0, len(buttons), 5):
-                    keyboard.row(*buttons[j:j+5])
-                
-                # Добавляем кнопки действий
-                btn_csv = types.InlineKeyboardButton("📄 Скачать CSV", callback_data="download_csv")
-                btn_filter = types.InlineKeyboardButton(
-                    "📦 Все товары" if with_stock_only else "✅ С остатком",
-                    callback_data=f"filter_stock:{'all' if with_stock_only else 'stock'}"
-                )
-                keyboard.row(btn_csv, btn_filter)
-                
-                bot.send_message(
-                    message.chat.id,
-                    msg_text,
-                    reply_markup=keyboard,
-                    parse_mode='Markdown'
-                )
-            else:
-                # Промежуточные сообщения без кнопок
-                bot.send_message(
-                    message.chat.id,
-                    msg_text,
-                    parse_mode='Markdown'
-                )
-                time.sleep(0.5)  # Небольшая пауза между сообщениями
-        
-        # Сохраняем данные в user_data для возможных действий
+        # Сохраняем список для CSV и других действий
         if user_id not in user_data:
             user_data[user_id] = {}
         user_data[user_id]['no_photo_list'] = variants
         
-        logger.info(f"Показан список товаров без фото: {total_count} шт. (пользователь {message.from_user.username})")
+        # Пагинация: 50 товаров на страницу
+        per_page = 50
+        total_pages = (len(variants) - 1) // per_page + 1
+        start = page * per_page
+        end = min(start + per_page, len(variants))
+        page_variants = variants[start:end]
+        
+        # Формируем заголовок
+        filter_text = "✅ С остатком > 0" if with_stock_only else "📦 Все товары"
+        text = (
+            f"📋 **ТОВАРЫ БЕЗ ФОТО** (стр. {page+1}/{total_pages})\n\n"
+            f"Фильтр: {filter_text}\n"
+            f"Всего: **{len(variants)} шт.**\n"
+            f"На странице: {start+1}-{end}\n\n"
+            f"👇 **Нажмите на код товара для загрузки фото:**"
+        )
+        
+        # Создаем inline-кнопки для товаров на текущей странице
+        keyboard = types.InlineKeyboardMarkup(row_width=4)
+        buttons = []
+        
+        for v in page_variants:
+            if v['code']:
+                btn = types.InlineKeyboardButton(
+                    text=f"{v['code']} ({v['stock']})",
+                    callback_data=f"select_code:{v['code']}"
+                )
+                buttons.append(btn)
+        
+        # Добавляем кнопки по 4 в ряд
+        for i in range(0, len(buttons), 4):
+            keyboard.row(*buttons[i:i+4])
+        
+        # Навигация между страницами
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(types.InlineKeyboardButton(
+                "⬅️ Назад", 
+                callback_data=f"no_photo_page:{page-1}:{'stock' if with_stock_only else 'all'}"
+            ))
+        nav_buttons.append(types.InlineKeyboardButton(
+            f"📄 {page+1}/{total_pages}", 
+            callback_data="no_photo:noop"
+        ))
+        if page < total_pages - 1:
+            nav_buttons.append(types.InlineKeyboardButton(
+                "➡️ Вперед", 
+                callback_data=f"no_photo_page:{page+1}:{'stock' if with_stock_only else 'all'}"
+            ))
+        keyboard.row(*nav_buttons)
+        
+        # Кнопки действий
+        btn_csv = types.InlineKeyboardButton("💾 Скачать CSV", callback_data="no_photo:csv:current")
+        btn_filter = types.InlineKeyboardButton(
+            "📦 Все товары" if with_stock_only else "✅ Только с остатком",
+            callback_data=f"no_photo:filter:{'all' if with_stock_only else 'stock'}"
+        )
+        keyboard.row(btn_csv, btn_filter)
+        
+        # Кнопка возврата
+        keyboard.row(types.InlineKeyboardButton("🔙 Главное меню", callback_data="no_photo:back"))
+        
+        bot.send_message(
+            chat_id,
+            text,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        
+        logger.info(f"Показана страница {page+1}/{total_pages} товаров без фото (пользователь {user_id})")
         
     except Exception as e:
         logger.error(f"Ошибка при показе товаров без фото: {e}", exc_info=True)
         
         # Удаляем сообщение о загрузке если есть
         try:
-            bot.delete_message(message.chat.id, loading_msg.message_id)
+            bot.delete_message(chat_id, loading_msg.message_id)
         except:
             pass
         
         bot.send_message(
-            message.chat.id,
+            chat_id,
             f"❌ **Ошибка при загрузке списка**\n\n"
             f"Ошибка: {str(e)}\n\n"
             f"Попробуйте позже или обратитесь к администратору",
@@ -1568,7 +1578,109 @@ def handle_callback(call):
             
             bot.answer_callback_query(call.id, "✅ CSV файл отправлен!")
         
-        # Переключение фильтра
+        # Меню товаров без фото
+        elif data.startswith('no_photo:'):
+            parts = data.split(':')
+            action = parts[1] if len(parts) > 1 else ''
+            param = parts[2] if len(parts) > 2 else ''
+            
+            # Создаем фейковое сообщение
+            class FakeMessage:
+                def __init__(self, chat_id, from_user):
+                    self.chat = type('obj', (object,), {'id': chat_id})()
+                    self.from_user = from_user
+            
+            fake_msg = FakeMessage(call.message.chat.id, call.from_user)
+            
+            if action == 'view':
+                # Просмотр списка
+                with_stock = (param == 'stock')
+                bot.answer_callback_query(call.id, "Загружаю список...")
+                show_products_without_photos(fake_msg, page=0, with_stock_only=with_stock)
+            
+            elif action == 'csv':
+                # Скачать CSV
+                bot.answer_callback_query(call.id, "Формирую CSV файл...")
+                
+                # Если param == 'current', используем сохраненный список
+                variants = user_data.get(user_id, {}).get('no_photo_list', [])
+                
+                if not variants:
+                    # Загружаем список
+                    with_stock = (param == 'stock')
+                    variants = get_variants_without_photos(with_stock_only=with_stock)
+                    if user_id not in user_data:
+                        user_data[user_id] = {}
+                    user_data[user_id]['no_photo_list'] = variants
+                
+                if not variants:
+                    bot.answer_callback_query(call.id, "✅ Нет товаров без фото!", show_alert=True)
+                    return
+                
+                # Формируем CSV
+                import io
+                csv_content = "Код,Название,Остаток\n"
+                for v in variants:
+                    code = v['code'] or 'Н/Д'
+                    name = v['name'].replace('"', '""')  # Экранируем кавычки
+                    stock = v['stock']
+                    csv_content += f'"{code}","{name}",{stock}\n'
+                
+                # Отправляем файл
+                csv_file = io.BytesIO(csv_content.encode('utf-8-sig'))  # BOM для Excel
+                csv_file.name = f'products_without_photos_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                
+                bot.send_document(
+                    call.message.chat.id,
+                    csv_file,
+                    caption=f"📄 **Товары без фото**\n\nВсего: {len(variants)} шт.",
+                    parse_mode='Markdown'
+                )
+                
+                bot.answer_callback_query(call.id, "✅ CSV файл отправлен!")
+            
+            elif action == 'filter':
+                # Изменить фильтр на текущей странице
+                with_stock = (param == 'stock')
+                bot.answer_callback_query(call.id, "🔄 Обновляю список...")
+                show_products_without_photos(fake_msg, page=0, with_stock_only=with_stock)
+            
+            elif action == 'back':
+                # Вернуться в главное меню
+                bot.answer_callback_query(call.id)
+                user_states[user_id] = STATE_MAIN_MENU
+                bot.send_message(
+                    call.message.chat.id,
+                    "🏠 **Главное меню**\n\nВыберите действие:",
+                    reply_markup=get_main_menu_keyboard(),
+                    parse_mode='Markdown'
+                )
+            
+            elif action == 'noop':
+                # Ничего не делать (кнопка с номером страницы)
+                bot.answer_callback_query(call.id)
+        
+        # Пагинация товаров без фото
+        elif data.startswith('no_photo_page:'):
+            parts = data.split(':')
+            page = int(parts[1])
+            filter_type = parts[2] if len(parts) > 2 else 'stock'
+            with_stock = (filter_type == 'stock')
+            
+            bot.answer_callback_query(call.id, f"Страница {page+1}")
+            
+            # Создаем фейковое сообщение
+            class FakeMessage:
+                def __init__(self, chat_id, from_user):
+                    self.chat = type('obj', (object,), {'id': chat_id})()
+                    self.from_user = from_user
+            
+            fake_msg = FakeMessage(call.message.chat.id, call.from_user)
+            
+            # Показываем нужную страницу
+            show_products_without_photos(fake_msg, page=page, with_stock_only=with_stock)
+        
+        # Переключение фильтра (старый callback, оставляем для совместимости)
         elif data.startswith('filter_stock:'):
             filter_type = data.split(':')[1]
             with_stock = (filter_type == 'stock')
@@ -1584,7 +1696,7 @@ def handle_callback(call):
             fake_msg = FakeMessage(call.message.chat.id, call.from_user)
             
             # Показываем список с новым фильтром
-            show_products_without_photos(fake_msg, with_stock_only=with_stock)
+            show_products_without_photos(fake_msg, page=0, with_stock_only=with_stock)
         
         else:
             bot.answer_callback_query(call.id, "Неизвестное действие")
