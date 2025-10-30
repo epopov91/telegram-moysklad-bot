@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.4.0"
+BOT_VERSION = "5.5.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -61,10 +61,12 @@ STATE_GET_CODE = 1
 STATE_GET_PHOTOS = 2
 STATE_STATISTICS = 3
 STATE_MANAGEMENT = 4
+STATE_NO_PHOTO_LIST = 5
 
 # Константы кнопок
 BTN_UPLOAD = "📸 Загрузить фото"
 BTN_STATS = "📊 Статистика"
+BTN_NO_PHOTO = "📋 Товары без фото"
 BTN_MANAGE = "⚙️ Управление"
 BTN_HELP = "ℹ️ Помощь"
 BTN_BACK = "🔙 Главное меню"
@@ -83,7 +85,8 @@ def get_main_menu_keyboard():
     """Главное меню"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(BTN_UPLOAD, BTN_STATS)
-    keyboard.row(BTN_MANAGE, BTN_HELP)
+    keyboard.row(BTN_NO_PHOTO, BTN_MANAGE)
+    keyboard.row(BTN_HELP)
     return keyboard
 
 def get_code_input_keyboard():
@@ -368,6 +371,115 @@ def get_variant_stock(variant_id: str):
                 return None
     
     return None
+
+def get_variants_without_photos(with_stock_only=True):
+    """Получение списка товаров без фотографий"""
+    try:
+        url_variants = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
+        url_stock = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
+        headers = {
+            'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
+            'Accept-Encoding': 'gzip'
+        }
+        
+        logger.info(f"Получение товаров без фото (с остатком: {with_stock_only})")
+        
+        # Получаем список variant_id с остатками если нужен фильтр
+        stock_variant_ids = set()
+        stock_data = {}  # variant_id -> stock
+        
+        if with_stock_only:
+            logger.info("Получаю товары с остатком...")
+            offset = 0
+            limit = 1000
+            
+            while True:
+                response = requests.get(
+                    f"{url_stock}?limit={limit}&offset={offset}&stockMode=positiveOnly",
+                    headers=headers,
+                    timeout=30
+                )
+                if response.status_code != 200:
+                    break
+                
+                rows = response.json().get('rows', [])
+                if not rows:
+                    break
+                
+                for row in rows:
+                    variant_meta = row.get('meta', {})
+                    if variant_meta.get('type') == 'variant':
+                        variant_href = variant_meta.get('href', '')
+                        if '/variant/' in variant_href:
+                            variant_id = variant_href.split('/variant/')[-1].split('?')[0]
+                            stock_variant_ids.add(variant_id)
+                            stock_data[variant_id] = int(row.get('stock', 0))
+                
+                offset += limit
+                if len(rows) < limit:
+                    break
+            
+            logger.info(f"Найдено {len(stock_variant_ids)} товаров с остатком")
+        
+        # Получаем все варианты и проверяем наличие фото
+        variants_without_photos = []
+        offset = 0
+        limit = 100
+        
+        while True:
+            response = requests.get(
+                f"{url_variants}?limit={limit}&offset={offset}",
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Ошибка получения вариантов: {response.status_code}")
+                break
+            
+            data = response.json()
+            variants = data.get('rows', [])
+            
+            if not variants:
+                break
+            
+            for variant in variants:
+                variant_id = variant.get('id')
+                
+                # Фильтр по остаткам
+                if with_stock_only and variant_id not in stock_variant_ids:
+                    continue
+                
+                # Проверяем наличие фото
+                images = variant.get('images', {})
+                has_images = images.get('meta', {}).get('size', 0) > 0
+                
+                if not has_images:
+                    variants_without_photos.append({
+                        'id': variant_id,
+                        'code': variant.get('code', ''),
+                        'name': variant.get('name', 'Без названия'),
+                        'stock': stock_data.get(variant_id, 0) if with_stock_only else 0
+                    })
+            
+            offset += limit
+            
+            # Прогресс
+            if offset % 500 == 0:
+                logger.info(f"Обработано {offset} вариантов, найдено без фото: {len(variants_without_photos)}")
+            
+            if len(variants) < limit:
+                break
+        
+        # Сортируем по остатку (убывание)
+        variants_without_photos.sort(key=lambda x: x['stock'], reverse=True)
+        
+        logger.info(f"Найдено товаров без фото: {len(variants_without_photos)}")
+        return variants_without_photos
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении товаров без фото: {e}", exc_info=True)
+        return []
 
 def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, variant_code: str):
     """Загрузка фото к модификации с повторными попытками"""
@@ -747,6 +859,8 @@ def handle_text(message):
             start_upload_flow(message)
         elif text == BTN_STATS:
             show_statistics(message)
+        elif text == BTN_NO_PHOTO:
+            show_products_without_photos(message)
         elif text == BTN_MANAGE:
             show_management(message)
         elif text == BTN_HELP:
@@ -859,6 +973,142 @@ def show_statistics(message):
         reply_markup=get_main_menu_keyboard(),
         parse_mode='Markdown'
     )
+
+def show_products_without_photos(message, with_stock_only=True):
+    """Показать список товаров без фото"""
+    user_id = message.from_user.id
+    user_states[user_id] = STATE_NO_PHOTO_LIST
+    
+    # Отправляем сообщение о загрузке
+    loading_msg = bot.send_message(
+        message.chat.id,
+        "⏳ **Загружаю список товаров без фото...**\n\n"
+        "Это может занять 30-60 секунд...",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        # Получаем товары без фото
+        variants = get_variants_without_photos(with_stock_only=with_stock_only)
+        
+        # Удаляем сообщение о загрузке
+        try:
+            bot.delete_message(message.chat.id, loading_msg.message_id)
+        except:
+            pass
+        
+        if not variants:
+            bot.send_message(
+                message.chat.id,
+                "✅ **Отлично!**\n\nВсе товары с остатком уже имеют фотографии! 🎉",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Формируем текст списка
+        total_count = len(variants)
+        filter_text = "✅ С остатком > 0" if with_stock_only else "📦 Все товары"
+        
+        # Формируем сообщения (макс 4096 символов на сообщение)
+        messages = []
+        current_message = f"📋 **ТОВАРЫ БЕЗ ФОТО**\n\n"
+        current_message += f"Фильтр: {filter_text} | Всего: **{total_count}** шт.\n"
+        current_message += f"Сортировка: По остатку ↓\n\n"
+        current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        item_number = 1
+        for variant in variants:
+            code = variant['code'] or 'Н/Д'
+            name = variant['name'][:80]  # Ограничиваем длину названия
+            stock = variant['stock']
+            
+            # Форматируем строку
+            line = f"**{code}** ({stock}) {name}\n"
+            
+            # Проверяем не превысим ли лимит
+            if len(current_message) + len(line) > 4000:  # Оставляем запас
+                messages.append(current_message)
+                current_message = f"📋 **ТОВАРЫ БЕЗ ФОТО** (продолжение)\n\n"
+            
+            current_message += line
+            item_number += 1
+        
+        # Добавляем последнее сообщение
+        if current_message:
+            messages.append(current_message)
+        
+        # Отправляем сообщения
+        for i, msg_text in enumerate(messages):
+            if i == len(messages) - 1:
+                # В последнем сообщении добавляем итог и кнопки
+                msg_text += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                msg_text += f"💡 **Для загрузки фото** введите код товара\n"
+                
+                # Создаем inline-кнопки для топ-10 товаров
+                keyboard = types.InlineKeyboardMarkup(row_width=5)
+                top_variants = variants[:min(10, len(variants))]
+                buttons = []
+                
+                for v in top_variants:
+                    if v['code']:
+                        btn = types.InlineKeyboardButton(
+                            text=v['code'],
+                            callback_data=f"select_code:{v['code']}"
+                        )
+                        buttons.append(btn)
+                
+                # Добавляем кнопки по 5 в ряд
+                for j in range(0, len(buttons), 5):
+                    keyboard.row(*buttons[j:j+5])
+                
+                # Добавляем кнопки действий
+                btn_csv = types.InlineKeyboardButton("📄 Скачать CSV", callback_data="download_csv")
+                btn_filter = types.InlineKeyboardButton(
+                    "📦 Все товары" if with_stock_only else "✅ С остатком",
+                    callback_data=f"filter_stock:{'all' if with_stock_only else 'stock'}"
+                )
+                keyboard.row(btn_csv, btn_filter)
+                
+                bot.send_message(
+                    message.chat.id,
+                    msg_text,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            else:
+                # Промежуточные сообщения без кнопок
+                bot.send_message(
+                    message.chat.id,
+                    msg_text,
+                    parse_mode='Markdown'
+                )
+                time.sleep(0.5)  # Небольшая пауза между сообщениями
+        
+        # Сохраняем данные в user_data для возможных действий
+        if user_id not in user_data:
+            user_data[user_id] = {}
+        user_data[user_id]['no_photo_list'] = variants
+        
+        logger.info(f"Показан список товаров без фото: {total_count} шт. (пользователь {message.from_user.username})")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при показе товаров без фото: {e}", exc_info=True)
+        
+        # Удаляем сообщение о загрузке если есть
+        try:
+            bot.delete_message(message.chat.id, loading_msg.message_id)
+        except:
+            pass
+        
+        bot.send_message(
+            message.chat.id,
+            f"❌ **Ошибка при загрузке списка**\n\n"
+            f"Ошибка: {str(e)}\n\n"
+            f"Попробуйте позже или обратитесь к администратору",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode='Markdown'
+        )
 
 def show_management(message):
     """Показать меню управления"""
@@ -1196,6 +1446,96 @@ def process_photo_queue(user_id):
         if user_id in user_photo_queue and len(user_photo_queue[user_id]) == 0:
             del user_photo_queue[user_id]
 
+
+# =========================
+# CALLBACK HANDLERS
+# =========================
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    """Обработка нажатий inline-кнопок"""
+    try:
+        user_id = call.from_user.id
+        data = call.data
+        
+        # Выбор кода товара
+        if data.startswith('select_code:'):
+            code = data.split(':')[1]
+            
+            # Переводим в состояние ввода кода и обрабатываем
+            user_states[user_id] = STATE_GET_CODE
+            
+            # Создаем фейковое сообщение для handle_code_input_text
+            class FakeMessage:
+                def __init__(self, chat_id, from_user):
+                    self.chat = type('obj', (object,), {'id': chat_id})()
+                    self.from_user = from_user
+            
+            fake_msg = FakeMessage(call.message.chat.id, call.from_user)
+            
+            # Отвечаем на callback
+            bot.answer_callback_query(call.id, f"Выбран код: {code}")
+            
+            # Обрабатываем как будто пользователь ввел код
+            handle_code_input_text(fake_msg, code)
+        
+        # Скачивание CSV
+        elif data == 'download_csv':
+            bot.answer_callback_query(call.id, "Формирую CSV файл...")
+            
+            # Получаем сохраненный список
+            variants = user_data.get(user_id, {}).get('no_photo_list', [])
+            
+            if not variants:
+                bot.answer_callback_query(call.id, "❌ Список устарел, обновите")
+                return
+            
+            # Формируем CSV
+            import io
+            csv_content = "Код,Название,Остаток\n"
+            for v in variants:
+                code = v['code'] or 'Н/Д'
+                name = v['name'].replace('"', '""')  # Экранируем кавычки
+                stock = v['stock']
+                csv_content += f'"{code}","{name}",{stock}\n'
+            
+            # Отправляем файл
+            csv_file = io.BytesIO(csv_content.encode('utf-8-sig'))  # BOM для Excel
+            csv_file.name = f'products_without_photos_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            
+            bot.send_document(
+                call.message.chat.id,
+                csv_file,
+                caption=f"📄 **Товары без фото**\n\nВсего: {len(variants)} шт.",
+                parse_mode='Markdown'
+            )
+            
+            bot.answer_callback_query(call.id, "✅ CSV файл отправлен!")
+        
+        # Переключение фильтра
+        elif data.startswith('filter_stock:'):
+            filter_type = data.split(':')[1]
+            with_stock = (filter_type == 'stock')
+            
+            bot.answer_callback_query(call.id, "🔄 Обновляю список...")
+            
+            # Создаем фейковое сообщение
+            class FakeMessage:
+                def __init__(self, chat_id, from_user):
+                    self.chat = type('obj', (object,), {'id': chat_id})()
+                    self.from_user = from_user
+            
+            fake_msg = FakeMessage(call.message.chat.id, call.from_user)
+            
+            # Показываем список с новым фильтром
+            show_products_without_photos(fake_msg, with_stock_only=with_stock)
+        
+        else:
+            bot.answer_callback_query(call.id, "Неизвестное действие")
+    
+    except Exception as e:
+        logger.error(f"Ошибка в callback handler: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
 
 # =========================
 # ЗАПУСК БОТА
