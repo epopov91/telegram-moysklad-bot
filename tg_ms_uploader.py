@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.5.2"
+BOT_VERSION = "5.5.3"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -1097,17 +1097,19 @@ def show_products_without_photos(message, with_stock_only=True):
             if i == len(messages) - 1:
                 # В последнем сообщении добавляем итог и кнопки
                 msg_text += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                msg_text += f"💡 **Для загрузки фото** введите код товара\n"
+                msg_text += f"💡 **Для загрузки фото** введите код или нажмите кнопку ниже\n"
+                msg_text += f"📌 Кнопки показывают ТОП-10 товаров с наибольшим остатком\n"
                 
-                # Создаем inline-кнопки для топ-10 товаров
+                # Создаем inline-кнопки для топ-10 товаров (по остатку, самые приоритетные)
                 keyboard = types.InlineKeyboardMarkup(row_width=5)
-                top_variants = variants[:min(10, len(variants))]
+                # Сортируем копию по остатку для кнопок (самые важные товары)
+                top_variants = sorted(variants, key=lambda x: x['stock'], reverse=True)[:min(10, len(variants))]
                 buttons = []
                 
                 for v in top_variants:
                     if v['code']:
                         btn = types.InlineKeyboardButton(
-                            text=v['code'],
+                            text=f"{v['code']} ({v['stock']})",  # Показываем код + остаток
                             callback_data=f"select_code:{v['code']}"
                         )
                         buttons.append(btn)
