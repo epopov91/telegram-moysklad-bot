@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.5.0"
+BOT_VERSION = "5.5.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -715,8 +715,14 @@ def cmd_update(message):
         result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
         
         if result.returncode == 0:
-            bot.send_message(message.chat.id, f"✅ Обновлено!\n```\n{result.stdout}\n```\n🔄 Перезапуск...", parse_mode='Markdown')
+            bot.send_message(
+                message.chat.id, 
+                f"✅ Обновлено!\n```\n{result.stdout}\n```\n\n🔄 Перезапуск...\n\n"
+                f"⚠️ **После перезапуска нажмите** /start **для обновления меню!**",
+                parse_mode='Markdown'
+            )
             logger.info("Обновление кода и перезапуск бота")
+            time.sleep(1)  # Даем время отправить сообщение
             
             # Перезапуск (правильная команда для Windows и Unix)
             os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -728,8 +734,15 @@ def cmd_update(message):
 @bot.message_handler(commands=['restart'])
 def cmd_restart(message):
     """Перезапуск бота"""
-    bot.send_message(message.chat.id, "🔄 **Перезапускаю бота...**\n\nПодождите 5-10 секунд", parse_mode='Markdown')
+    bot.send_message(
+        message.chat.id, 
+        "🔄 **Перезапускаю бота...**\n\n"
+        "Подождите 5-10 секунд\n\n"
+        "⚠️ **После перезапуска нажмите** /start **для обновления меню!**",
+        parse_mode='Markdown'
+    )
     logger.info(f"Перезапуск бота по команде {message.from_user.username}")
+    time.sleep(1)
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 @bot.message_handler(commands=['reboot'])
@@ -738,7 +751,8 @@ def cmd_reboot(message):
     bot.send_message(
         message.chat.id, 
         "🆘 **Экстренный перезапуск!**\n\n"
-        "Очищаю состояния и перезапускаю...",
+        "Очищаю состояния и перезапускаю...\n\n"
+        "⚠️ **После перезапуска нажмите** /start **для обновления меню!**",
         parse_mode='Markdown'
     )
     logger.warning(f"ЭКСТРЕННЫЙ перезапуск по команде {message.from_user.username}")
@@ -748,6 +762,7 @@ def cmd_reboot(message):
     user_data.clear()
     user_processing.clear()
     
+    time.sleep(1)
     # Перезапуск
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -779,12 +794,25 @@ def cmd_fix(message):
                               capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)))
         
         if result.returncode == 0:
-            bot.send_message(message.chat.id, "✅ Зависимости проверены\n\n3️⃣ Перезапуск бота...")
+            bot.send_message(
+                message.chat.id, 
+                "✅ Зависимости проверены\n\n"
+                "3️⃣ Перезапуск бота...\n\n"
+                "⚠️ **После перезапуска нажмите** /start **для обновления меню!**",
+                parse_mode='Markdown'
+            )
         else:
-            bot.send_message(message.chat.id, f"⚠️ Предупреждение при установке:\n```\n{result.stderr}\n```\n\n3️⃣ Перезапуск бота...", parse_mode='Markdown')
+            bot.send_message(
+                message.chat.id, 
+                f"⚠️ Предупреждение при установке:\n```\n{result.stderr}\n```\n\n"
+                f"3️⃣ Перезапуск бота...\n\n"
+                f"⚠️ **После перезапуска нажмите** /start **для обновления меню!**",
+                parse_mode='Markdown'
+            )
         
         logger.info(f"Автоматическое исправление и перезапуск по команде {message.from_user.username}")
         
+        time.sleep(1)  # Даем время отправить сообщение
         # Шаг 3: Перезапуск (правильная команда для Windows и Unix)
         os.execv(sys.executable, [sys.executable] + sys.argv)
         
@@ -1627,7 +1655,8 @@ def main():
                 ADMIN_USER_ID,
                 f"✅ **Бот запущен!**\n\n"
                 f"Версия: {BOT_VERSION}\n"
-                f"Автообновление: включено ✅",
+                f"Автообновление: включено ✅\n\n"
+                f"💡 **Нажмите** /start **для обновления меню с новыми кнопками!**",
                 parse_mode='Markdown'
             )
         except:
