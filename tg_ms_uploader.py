@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.7.1"
+BOT_VERSION = "5.7.2"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -868,6 +868,8 @@ def handle_product_code_command(message):
     user_id = message.from_user.id
     code = message.text[1:]  # Убираем слеш
     
+    logger.info(f"[HANDLER: product_code_command] User: {message.from_user.username} ({user_id}) | Text: '{message.text}' | Code: {code} | State: {user_states.get(user_id, 'None')}")
+    
     # Переводим в состояние поиска кода
     user_states[user_id] = STATE_GET_CODE
     
@@ -883,8 +885,11 @@ def handle_text(message):
     text = message.text
     state = user_states.get(user_id, STATE_MAIN_MENU)
     
+    logger.info(f"[HANDLER: handle_text] User: {message.from_user.username} ({user_id}) | Text: '{text[:50]}...' | State: {state}")
+    
     # Обработка универсальных кнопок (работают всегда)
     if text == BTN_BACK or text == BTN_CANCEL or text == "❌ Отмена":
+        logger.info(f"[HANDLER: handle_text] -> Кнопка НАЗАД/ОТМЕНА")
         show_main_menu(message)
         return
     
@@ -898,18 +903,25 @@ def handle_text(message):
     
     # Обработка кнопок главного меню
     if state == STATE_MAIN_MENU:
+        logger.info(f"[HANDLER: handle_text] -> State: MAIN_MENU, Text: '{text}'")
         if text == BTN_UPLOAD:
+            logger.info(f"[HANDLER: handle_text] -> BTN_UPLOAD")
             start_upload_flow(message)
         elif text == BTN_STATS:
+            logger.info(f"[HANDLER: handle_text] -> BTN_STATS")
             show_statistics(message)
         elif text == BTN_NO_PHOTO:
+            logger.info(f"[HANDLER: handle_text] -> BTN_NO_PHOTO")
             show_no_photo_menu(message)
         elif text == BTN_MANAGE:
+            logger.info(f"[HANDLER: handle_text] -> BTN_MANAGE")
             show_management(message)
         elif text == BTN_HELP:
+            logger.info(f"[HANDLER: handle_text] -> BTN_HELP")
             cmd_help(message)
         else:
             # Любой другой текст - показываем подсказку
+            logger.warning(f"[HANDLER: handle_text] -> UNKNOWN TEXT in MAIN_MENU: '{text}'")
             bot.send_message(
                 message.chat.id, 
                 "Используйте кнопки меню для навигации 👇",
@@ -919,12 +931,15 @@ def handle_text(message):
     
     # Ввод кода модификации
     if state == STATE_GET_CODE:
+        logger.info(f"[HANDLER: handle_text] -> State: GET_CODE, Text: '{text}'")
         # Проверяем, не кнопка ли это из истории
         if text.startswith("🔖 "):
             code = text.replace("🔖 ", "").strip()
+            logger.info(f"[HANDLER: handle_text] -> История: код {code}")
             handle_code_input_text(message, code)
         else:
             # Обычный ввод кода
+            logger.info(f"[HANDLER: handle_text] -> Ввод кода: {text}")
             handle_code_input_text(message, text)
         return
     
