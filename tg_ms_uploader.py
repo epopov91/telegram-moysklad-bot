@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.6.0"
+BOT_VERSION = "5.7.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -1101,24 +1101,19 @@ def show_products_without_photos(message, page=0, with_stock_only=True):
             f"Фильтр: {filter_text}\n"
             f"Всего: **{len(variants)} шт.**\n"
             f"На странице: {start+1}-{end}\n\n"
-            f"👇 **Нажмите на код товара для загрузки фото:**"
+            f"👇 **Кликните на код для загрузки фото:**\n\n"
         )
         
-        # Создаем inline-кнопки для товаров на текущей странице
-        keyboard = types.InlineKeyboardMarkup(row_width=4)
-        buttons = []
-        
+        # Добавляем список товаров с кликабельными кодами-командами
         for v in page_variants:
             if v['code']:
-                btn = types.InlineKeyboardButton(
-                    text=f"{v['code']} ({v['stock']})",
-                    callback_data=f"select_code:{v['code']}"
-                )
-                buttons.append(btn)
+                code = v['code']
+                stock = v['stock']
+                name = v['name'][:40]  # Обрезаем длинные названия
+                text += f"/{code} ({stock}) {name}\n"
         
-        # Добавляем кнопки по 4 в ряд
-        for i in range(0, len(buttons), 4):
-            keyboard.row(*buttons[i:i+4])
+        # Создаем inline-кнопки только для навигации и действий
+        keyboard = types.InlineKeyboardMarkup(row_width=4)
         
         # Навигация между страницами
         nav_buttons = []
@@ -1223,6 +1218,20 @@ def handle_photo(message):
             "📸 Сначала выберите товар!\n\nНажмите кнопку ниже:",
             reply_markup=get_main_menu_keyboard()
         )
+
+@bot.message_handler(func=lambda message: message.text and message.text.startswith('/') and message.text[1:].isdigit() and len(message.text) == 6)
+def handle_product_code_command(message):
+    """Обработка кликабельных кодов товаров вида /00005"""
+    user_id = message.from_user.id
+    code = message.text[1:]  # Убираем слеш
+    
+    # Переводим в состояние поиска кода
+    user_states[user_id] = STATE_GET_CODE
+    
+    logger.info(f"Пользователь {message.from_user.username} кликнул на код: {code}")
+    
+    # Обрабатываем как обычный ввод кода
+    handle_code_input_text(message, code)
 
 def handle_code_input_text(message, code):
     """Обработка ввода кода модификации"""
