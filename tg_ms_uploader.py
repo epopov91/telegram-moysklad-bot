@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.5.1"
+BOT_VERSION = "5.5.2"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -471,8 +471,8 @@ def get_variants_without_photos(with_stock_only=True):
             if len(variants) < limit:
                 break
         
-        # Сортируем по остатку (убывание)
-        variants_without_photos.sort(key=lambda x: x['stock'], reverse=True)
+        # Сортируем по коду (возрастание) для удобного поиска
+        variants_without_photos.sort(key=lambda x: x['code'] or 'ЯЯЯЯ')  # Товары без кода - в конец
         
         logger.info(f"Найдено товаров без фото: {len(variants_without_photos)}")
         return variants_without_photos
@@ -974,19 +974,30 @@ def show_statistics(message):
     # Статистика загрузок
     total_uploads, unique_products = get_upload_stats()
     
-    # Отправляем первое сообщение
-    bot.send_message(
+    # Отправляем первое сообщение с общей статистикой
+    first_msg = bot.send_message(
         message.chat.id,
         f"📊 **Статистика загрузок**\n\n"
         f"📸 Всего фото загружено: {total_uploads}\n"
-        f"🏷 Уникальных товаров: {unique_products}\n\n"
-        f"⏳ Загружаю данные из МойСклад...",
+        f"🏷 Уникальных товаров: {unique_products}",
+        parse_mode='Markdown'
+    )
+    
+    # Отправляем отдельное сообщение о загрузке из МойСклад
+    loading_msg = bot.send_message(
+        message.chat.id,
+        "⏳ **Загружаю статистику из МойСклад...**\n\n"
+        "📦 Проверяю количество модификаций\n"
+        "✅ Считаю товары с остатком\n"
+        "📸 Проверяю наличие фотографий\n\n"
+        "_Это займет 10-20 секунд..._",
         parse_mode='Markdown'
     )
     
     # Получаем статистику из МойСклад (это может занять время)
     ms_stats = get_moysklad_statistics()
     
+    # ЗАМЕНЯЕМ содержимое сообщения о загрузке на результат
     stats_text = f"📊 **Статистика МойСклад**\n\n"
     stats_text += f"📦 Всего модификаций: {ms_stats['total']}\n"
     stats_text += f"✅ С товарным остатком: {ms_stats['with_stock']}\n"
@@ -995,11 +1006,26 @@ def show_statistics(message):
     if ms_stats['checked'] < ms_stats['total']:
         stats_text += f"\n\n⚠️ Проверено: {ms_stats['checked']} из {ms_stats['total']}"
     
+    try:
+        bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=loading_msg.message_id,
+            text=stats_text,
+            parse_mode='Markdown'
+        )
+    except:
+        # Если не удалось изменить, отправляем новым сообщением
+        bot.send_message(
+            message.chat.id,
+            stats_text,
+            parse_mode='Markdown'
+        )
+    
+    # Отправляем клавиатуру отдельным сообщением
     bot.send_message(
         message.chat.id,
-        stats_text,
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode='Markdown'
+        "Выберите действие:",
+        reply_markup=get_main_menu_keyboard()
     )
 
 def show_products_without_photos(message, with_stock_only=True):
@@ -1042,7 +1068,7 @@ def show_products_without_photos(message, with_stock_only=True):
         messages = []
         current_message = f"📋 **ТОВАРЫ БЕЗ ФОТО**\n\n"
         current_message += f"Фильтр: {filter_text} | Всего: **{total_count}** шт.\n"
-        current_message += f"Сортировка: По остатку ↓\n\n"
+        current_message += f"Сортировка: По коду ↑\n\n"
         current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         
         item_number = 1
