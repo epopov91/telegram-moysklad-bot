@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.6.0"
+BOT_VERSION = "5.7.2"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -371,38 +371,6 @@ def get_variant_stock(variant_id: str):
                 return None
     
     return None
-
-def get_product_variants(product_id: str):
-    """Получение всех модификаций товара по product_id через meta.variants.href"""
-    headers = {
-        'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
-        'Accept-Encoding': 'gzip'
-    }
-    
-    try:
-        # Получаем продукт
-        url_product = f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
-        logger.debug(f"get_product_variants: получаем продукт {product_id}")
-        response = requests.get(url_product, headers=headers, timeout=15)
-        response.raise_for_status()
-        product_data = response.json()
-        
-        # Получаем href вариантов из meta
-        variants_href = product_data.get('meta', {}).get('variants', {}).get('href')
-        if variants_href:
-            logger.debug(f"get_product_variants: получаем варианты по ссылке: {variants_href}")
-            response = requests.get(variants_href, headers=headers, timeout=15)
-            response.raise_for_status()
-            variants_data = response.json()
-            rows = variants_data.get('rows', [])
-            logger.info(f"get_product_variants: найдено {len(rows)} модификаций для product_id={product_id}")
-            return rows
-        else:
-            logger.warning(f"get_product_variants: нет variants href в meta продукта {product_id}")
-            return []
-    except Exception as e:
-        logger.error(f"Ошибка при получении модификаций товара {product_id}: {e}", exc_info=True)
-        return []
 
 def get_variants_without_photos(with_stock_only=True):
     """Получение списка товаров без фотографий"""
@@ -893,6 +861,23 @@ def cmd_shell(message):
 # ОБРАБОТКА СОСТОЯНИЙ
 # =========================
 
+# Обработчик кликабельных кодов (должен быть ПЕРЕД handle_text!)
+@bot.message_handler(func=lambda message: message.text and message.text.startswith('/') and message.text[1:].isdigit() and len(message.text) == 6)
+def handle_product_code_command(message):
+    """Обработка кликабельных кодов товаров вида /00005"""
+    user_id = message.from_user.id
+    code = message.text[1:]  # Убираем слеш
+    
+    logger.info(f"[HANDLER: product_code_command] User: {message.from_user.username} ({user_id}) | Text: '{message.text}' | Code: {code} | State: {user_states.get(user_id, 'None')}")
+    
+    # Переводим в состояние поиска кода
+    user_states[user_id] = STATE_GET_CODE
+    
+    logger.info(f"Пользователь {message.from_user.username} кликнул на код: {code}")
+    
+    # Обрабатываем как обычный ввод кода
+    handle_code_input_text(message, code)
+
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     """Обработка текстовых сообщений и кнопок"""
@@ -900,8 +885,11 @@ def handle_text(message):
     text = message.text
     state = user_states.get(user_id, STATE_MAIN_MENU)
     
+    logger.info(f"[HANDLER: handle_text] User: {message.from_user.username} ({user_id}) | Text: '{text[:50]}...' | State: {state}")
+    
     # Обработка универсальных кнопок (работают всегда)
     if text == BTN_BACK or text == BTN_CANCEL or text == "❌ Отмена":
+        logger.info(f"[HANDLER: handle_text] -> Кнопка НАЗАД/ОТМЕНА")
         show_main_menu(message)
         return
     
@@ -915,18 +903,25 @@ def handle_text(message):
     
     # Обработка кнопок главного меню
     if state == STATE_MAIN_MENU:
+        logger.info(f"[HANDLER: handle_text] -> State: MAIN_MENU, Text: '{text}'")
         if text == BTN_UPLOAD:
+            logger.info(f"[HANDLER: handle_text] -> BTN_UPLOAD")
             start_upload_flow(message)
         elif text == BTN_STATS:
+            logger.info(f"[HANDLER: handle_text] -> BTN_STATS")
             show_statistics(message)
         elif text == BTN_NO_PHOTO:
+            logger.info(f"[HANDLER: handle_text] -> BTN_NO_PHOTO")
             show_no_photo_menu(message)
         elif text == BTN_MANAGE:
+            logger.info(f"[HANDLER: handle_text] -> BTN_MANAGE")
             show_management(message)
         elif text == BTN_HELP:
+            logger.info(f"[HANDLER: handle_text] -> BTN_HELP")
             cmd_help(message)
         else:
             # Любой другой текст - показываем подсказку
+            logger.warning(f"[HANDLER: handle_text] -> UNKNOWN TEXT in MAIN_MENU: '{text}'")
             bot.send_message(
                 message.chat.id, 
                 "Используйте кнопки меню для навигации 👇",
@@ -936,12 +931,15 @@ def handle_text(message):
     
     # Ввод кода модификации
     if state == STATE_GET_CODE:
+        logger.info(f"[HANDLER: handle_text] -> State: GET_CODE, Text: '{text}'")
         # Проверяем, не кнопка ли это из истории
         if text.startswith("🔖 "):
             code = text.replace("🔖 ", "").strip()
+            logger.info(f"[HANDLER: handle_text] -> История: код {code}")
             handle_code_input_text(message, code)
         else:
             # Обычный ввод кода
+            logger.info(f"[HANDLER: handle_text] -> Ввод кода: {text}")
             handle_code_input_text(message, text)
         return
     
@@ -1133,24 +1131,19 @@ def show_products_without_photos(message, page=0, with_stock_only=True):
             f"Фильтр: {filter_text}\n"
             f"Всего: **{len(variants)} шт.**\n"
             f"На странице: {start+1}-{end}\n\n"
-            f"👇 **Нажмите на код товара для загрузки фото:**"
+            f"👇 **Кликните на код для загрузки фото:**\n\n"
         )
         
-        # Создаем inline-кнопки для товаров на текущей странице
-        keyboard = types.InlineKeyboardMarkup(row_width=4)
-        buttons = []
-        
+        # Добавляем список товаров с кликабельными кодами-командами
         for v in page_variants:
             if v['code']:
-                btn = types.InlineKeyboardButton(
-                    text=f"{v['code']} ({v['stock']})",
-                    callback_data=f"select_code:{v['code']}"
-                )
-                buttons.append(btn)
+                code = v['code']
+                stock = v['stock']
+                name = v['name'][:40]  # Обрезаем длинные названия
+                text += f"/{code} ({stock}) {name}\n"
         
-        # Добавляем кнопки по 4 в ряд
-        for i in range(0, len(buttons), 4):
-            keyboard.row(*buttons[i:i+4])
+        # Создаем inline-кнопки только для навигации и действий
+        keyboard = types.InlineKeyboardMarkup(row_width=4)
         
         # Навигация между страницами
         nav_buttons = []
