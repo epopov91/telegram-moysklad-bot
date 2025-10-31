@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.8.0"
+BOT_VERSION = "5.8.1"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -405,19 +405,29 @@ def find_same_color_variants(variant):
     """Находит все модификации того же товара и того же цвета, но разных размеров"""
     product = variant.get('product')
     if not product:
+        logger.debug("find_same_color_variants: нет product в варианте")
         return []
     
     product_id = product.get('meta', {}).get('href', '').split('/product/')[-1].split('?')[0]
     if not product_id:
+        logger.debug("find_same_color_variants: не удалось извлечь product_id")
         return []
+    
+    logger.info(f"find_same_color_variants: ищем модификации для product_id={product_id}, вариант={variant.get('code')}")
     
     # Получаем все модификации товара
     all_variants = get_product_variants(product_id)
+    logger.info(f"find_same_color_variants: найдено {len(all_variants)} модификаций товара")
+    
     if len(all_variants) <= 1:
+        logger.debug(f"find_same_color_variants: всего {len(all_variants)} модификация, связанных нет")
         return []
     
     # Пытаемся определить цвет текущей модификации
     current_variant_name = variant.get('name', '')
+    current_variant_code = variant.get('code', '')
+    
+    logger.info(f"find_same_color_variants: текущий вариант {current_variant_code} - {current_variant_name}")
     
     # Проверяем характеристики
     characteristics = variant.get('characteristics', [])
@@ -426,10 +436,13 @@ def find_same_color_variants(variant):
         char_name = char.get('name', '').lower()
         if 'цвет' in char_name or 'color' in char_name:
             current_color = char.get('value')
+            logger.info(f"find_same_color_variants: найден цвет в характеристиках: {current_color}")
             break
     
     # Группируем по общим словам в названии (эвристика)
     same_product_variants = [v for v in all_variants if v.get('id') != variant.get('id')]
+    logger.info(f"find_same_color_variants: ищем среди {len(same_product_variants)} других модификаций")
+    
     result = []
     base_name_parts = set(current_variant_name.lower().split())
     
@@ -441,17 +454,22 @@ def find_same_color_variants(variant):
         common_parts = base_name_parts & v_parts
         common_parts = {p for p in common_parts if not p.isdigit()}
         
+        logger.debug(f"find_same_color_variants: {v.get('code')} - общих слов: {len(common_parts)} ({common_parts})")
+        
         # Если есть достаточно общих слов - считаем что это тот же цвет
-        if len(common_parts) >= 2:  # Минимум 2 общих слова (название товара + цвет)
+        # Смягчаем условие: достаточно 1 общего слова (название товара)
+        if len(common_parts) >= 1:
             result.append({
                 'id': v.get('id'),
                 'code': v.get('code'),
                 'name': v.get('name'),
                 'color': ' '.join(sorted(common_parts))
             })
+            logger.debug(f"find_same_color_variants: добавлен вариант {v.get('code')}")
     
     # Если не нашли по общим словам, возвращаем все модификации (ограничиваем 10)
     if not result:
+        logger.info(f"find_same_color_variants: не найдено по общим словам, возвращаем все {len(same_product_variants[:10])} модификации")
         result = [{
             'id': v.get('id'),
             'code': v.get('code'),
@@ -459,6 +477,7 @@ def find_same_color_variants(variant):
             'color': None
         } for v in same_product_variants[:10]]
     
+    logger.info(f"find_same_color_variants: результат - найдено {len(result)} связанных модификаций")
     return result
 
 def get_variants_without_photos(with_stock_only=True):
@@ -1474,7 +1493,9 @@ def handle_code_input_text(message, code):
             pass
         
         # ПРОВЕРЯЕМ: есть ли другие размеры того же цвета
+        logger.info(f"handle_code_input_text: проверяем связанные модификации для {code}")
         same_color_variants = find_same_color_variants(variant)
+        logger.info(f"handle_code_input_text: найдено {len(same_color_variants) if same_color_variants else 0} связанных модификаций")
         
         if same_color_variants:
             # Есть связанные модификации - предлагаем выбор
