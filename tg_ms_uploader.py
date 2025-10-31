@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.7.2"
+BOT_VERSION = "5.8.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -62,6 +62,7 @@ STATE_GET_PHOTOS = 2
 STATE_STATISTICS = 3
 STATE_MANAGEMENT = 4
 STATE_NO_PHOTO_LIST = 5
+STATE_CHOOSE_UPLOAD_SCOPE = 6  # Выбор области загрузки: только этот размер или все размеры
 
 # Константы кнопок
 BTN_UPLOAD = "📸 Загрузить фото"
@@ -107,6 +108,14 @@ def get_photo_upload_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(BTN_FINISH)
     keyboard.row(BTN_ANOTHER_PRODUCT, BTN_BACK)
+    return keyboard
+
+def get_upload_scope_keyboard():
+    """Клавиатура для выбора области загрузки фото"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row("📸 Только этот размер")
+    keyboard.row("🎨 Все размеры этого цвета")
+    keyboard.row(BTN_BACK)
     return keyboard
 
 def get_management_keyboard():
@@ -221,12 +230,12 @@ def get_variant_by_code(code: str):
     for attempt in range(3):
         try:
             response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        response.raise_for_status()
+        data = response.json()
             
             if data.get('rows'):
                 return data['rows'][0]
-            return None
+        return None
             
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут при поиске {code}, попытка {attempt + 1}/3")
@@ -240,11 +249,11 @@ def get_variant_by_code(code: str):
                 import time
                 time.sleep(2)
                 continue
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Ошибка при поиске модификации {code}: {e}")
             break
     
-    return None
+        return None
 
 def get_variant_images(variant_id: str):
     """Получение списка фото модификации с повторными попытками"""
@@ -257,8 +266,8 @@ def get_variant_images(variant_id: str):
     for attempt in range(3):
         try:
             response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        response.raise_for_status()
+        data = response.json()
             
             return data.get('rows', [])
             
@@ -268,7 +277,7 @@ def get_variant_images(variant_id: str):
                 import time
                 time.sleep(1)
                 continue
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Ошибка при получении фото модификации {variant_id}: {e}")
             break
     
@@ -353,8 +362,8 @@ def get_variant_stock(variant_id: str):
                 total_stock = sum(row.get('stock', 0) for row in rows)
                 return int(total_stock)
             else:
-                return 0
-                
+        return 0
+
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут при получении остатка (попытка {attempt + 1}/3)")
             if attempt < 2:
@@ -371,6 +380,108 @@ def get_variant_stock(variant_id: str):
                 return None
     
     return None
+
+def get_product_variants(product_id: str):
+    """Получение всех модификаций товара по product_id"""
+    url = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
+        'Accept-Encoding': 'gzip'
+    }
+    
+    filter_str = f"product=https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
+    params = {'filter': filter_str, 'limit': 500}
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return data.get('rows', [])
+    except Exception as e:
+        logger.error(f"Ошибка при получении модификаций товара {product_id}: {e}")
+        return []
+
+def find_same_color_variants(variant):
+    """Находит все модификации того же товара и того же цвета, но разных размеров"""
+    product = variant.get('product')
+    if not product:
+        return []
+    
+    product_id = product.get('meta', {}).get('href', '').split('/product/')[-1].split('?')[0]
+    if not product_id:
+        return []
+    
+    # Получаем все модификации товара
+    all_variants = get_product_variants(product_id)
+    if len(all_variants) <= 1:
+        return []
+    
+    # Пытаемся определить цвет текущей модификации
+    # В МойСклад цвет может храниться в характеристиках или в названии
+    current_variant_name = variant.get('name', '')
+    current_code = variant.get('code', '')
+    
+    # Извлекаем цвет из названия (например: "Комбинезон Графит 68" -> "Графит")
+    # Или ищем в характеристиках
+    current_color = None
+    
+    # Проверяем характеристики
+    characteristics = variant.get('characteristics', [])
+    for char in characteristics:
+        char_name = char.get('name', '').lower()
+        if 'цвет' in char_name or 'color' in char_name:
+            current_color = char.get('value')
+            break
+    
+    # Если не нашли в характеристиках, пытаемся извлечь из названия
+    # Это эвристика - может не работать для всех случаев
+    if not current_color:
+        # Попробуем найти общую часть с другими модификациями
+        # Например: все варианты "Графит" содержат это слово
+        pass
+    
+    # Пока используем упрощенный подход: группируем по общим словам в названии
+    # Или просто возвращаем все модификации товара для выбора пользователем
+    # Более правильный способ - использовать характеристики, но их нужно настроить в МойСклад
+    
+    # ВРЕМЕННОЕ РЕШЕНИЕ: возвращаем все модификации товара
+    # Пользователь увидит список и сможет выбрать
+    same_product_variants = [v for v in all_variants if v.get('id') != variant.get('id')]
+    
+    # Попытка группировать по цвету из названия
+    # Если в названии есть общее слово (цвет), считаем что это одна группа
+    # Например: "Комбинезон Графит 68" и "Комбинезон Графит 74" - один цвет
+    
+    result = []
+    base_name_parts = set(current_variant_name.lower().split())
+    
+    for v in same_product_variants:
+        v_name = v.get('name', '').lower()
+        v_parts = set(v_name.split())
+        
+        # Находим общие слова (кроме цифр - размеров)
+        common_parts = base_name_parts & v_parts
+        common_parts = {p for p in common_parts if not p.isdigit()}
+        
+        # Если есть достаточно общих слов - считаем что это тот же цвет
+        if len(common_parts) >= 2:  # Минимум 2 общих слова (например, название товара + цвет)
+            result.append({
+                'id': v.get('id'),
+                'code': v.get('code'),
+                'name': v.get('name'),
+                'color': ' '.join(sorted(common_parts))  # Условный "цвет"
+            })
+    
+    # Если не нашли по общим словам, возвращаем все модификации
+    if not result:
+        result = [{
+            'id': v.get('id'),
+            'code': v.get('code'),
+            'name': v.get('name'),
+            'color': None
+        } for v in same_product_variants[:10]]  # Ограничиваем 10 для безопасности
+    
+    return result
 
 def get_variants_without_photos(with_stock_only=True):
     """Получение списка товаров без фотографий"""
@@ -509,10 +620,10 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
     for attempt in range(3):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
+        response.raise_for_status()
             
             logger.info(f"Фото {filename} успешно загружено для модификации {variant_id}")
-            return True
+        return True
             
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут загрузки фото, попытка {attempt + 1}/3")
@@ -526,11 +637,11 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
                 import time
                 time.sleep(3)
                 continue
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке фото: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фото: {e}")
             break
     
-    return False
+        return False
 
 # =========================
 # ПРОВЕРКА АДМИНА
@@ -726,7 +837,7 @@ def cmd_update(message):
             
             # Перезапуск (правильная команда для Windows и Unix)
             os.execv(sys.executable, [sys.executable] + sys.argv)
-        else:
+    else:
             bot.send_message(message.chat.id, f"❌ Ошибка:\n```\n{result.stderr}\n```", parse_mode='Markdown')
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
@@ -942,6 +1053,63 @@ def handle_text(message):
             logger.info(f"[HANDLER: handle_text] -> Ввод кода: {text}")
             handle_code_input_text(message, text)
         return
+    
+    # Выбор области загрузки фото
+    if state == STATE_CHOOSE_UPLOAD_SCOPE:
+        logger.info(f"[HANDLER: handle_text] -> State: CHOOSE_UPLOAD_SCOPE, Text: '{text}'")
+        
+        if user_id not in user_data:
+            user_states[user_id] = STATE_MAIN_MENU
+            show_main_menu(message)
+            return
+        
+        if text == "📸 Только этот размер":
+            logger.info(f"[HANDLER: handle_text] -> Выбрано: только этот размер")
+            # Загружаем только в текущую модификацию
+            user_data[user_id]['target_variant_ids'] = [user_data[user_id]['variant_id']]
+            user_states[user_id] = STATE_GET_PHOTOS
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ **Выбрано:** только этот размер\n\n"
+                f"📸 **Теперь отправьте фото** (можно несколько)\n\n"
+                f"Когда закончите - нажмите **✅ Завершить**",
+                reply_markup=get_photo_upload_keyboard(),
+                parse_mode='Markdown'
+            )
+            return
+        
+        elif text == "🎨 Все размеры этого цвета":
+            logger.info(f"[HANDLER: handle_text] -> Выбрано: все размеры")
+            # Загружаем во все связанные модификации + текущую
+            target_variant_ids = [user_data[user_id]['variant_id']]
+            same_color_variants = user_data[user_id].get('same_color_variants', [])
+            for v in same_color_variants:
+                target_variant_ids.append(v['id'])
+            
+            user_data[user_id]['target_variant_ids'] = target_variant_ids
+            user_states[user_id] = STATE_GET_PHOTOS
+            
+            count = len(target_variant_ids)
+            bot.send_message(
+                message.chat.id,
+                f"✅ **Выбрано:** все размеры этого цвета ({count} модификаций)\n\n"
+                f"📸 **Теперь отправьте фото** (можно несколько)\n\n"
+                f"Фото будут загружены во **все {count} модификаций**\n\n"
+                f"Когда закончите - нажмите **✅ Завершить**",
+                reply_markup=get_photo_upload_keyboard(),
+                parse_mode='Markdown'
+            )
+            return
+        
+        else:
+            # Неизвестная команда - показываем подсказку
+            bot.send_message(
+                message.chat.id,
+                "Используйте кнопки ниже для выбора:",
+                reply_markup=get_upload_scope_keyboard()
+            )
+            return
     
     # Загрузка фото - НЕ ПРИНИМАЕМ ТЕКСТ, только фото или кнопки
     if state == STATE_GET_PHOTOS:
@@ -1334,7 +1502,6 @@ def handle_code_input_text(message, code):
             'existing_images_count': images_count,
             'uploaded_count': 0
         })
-        user_states[user_id] = STATE_GET_PHOTOS
         
         # Удаляем сообщение о поиске
         try:
@@ -1342,32 +1509,73 @@ def handle_code_input_text(message, code):
         except:
             pass
         
-        # Формируем сообщение с информацией о фото
-        if images_count > 0:
-            photos_emoji = "📸" * min(images_count, 5)
-            photos_info = f"📷 Текущих фото: {images_count} {photos_emoji}\n"
-        else:
-            photos_info = "📷 Текущих фото: нет\n"
+        # ПРОВЕРЯЕМ: есть ли другие размеры того же цвета
+        same_color_variants = find_same_color_variants(variant)
         
-        # Добавляем информацию об остатках
-        if stock is not None:
-            if stock > 0:
-                stock_info = f"📦 Товарный остаток: **{stock} шт.**\n\n"
+        if same_color_variants:
+            # Есть связанные модификации - предлагаем выбор
+            user_data[user_id]['same_color_variants'] = same_color_variants
+            user_states[user_id] = STATE_CHOOSE_UPLOAD_SCOPE
+            
+            # Формируем список размеров
+            variants_list = "\n".join([f"  • {v['code']}: {v['name']}" for v in same_color_variants[:10]])
+            
+            # Формируем сообщение с информацией о фото
+            if images_count > 0:
+                photos_emoji = "📸" * min(images_count, 5)
+                photos_info = f"📷 Текущих фото: {images_count} {photos_emoji}\n"
             else:
-                stock_info = f"⚠️ Товарный остаток: **0 шт.**\n\n"
+                photos_info = "📷 Текущих фото: нет\n"
+            
+            # Добавляем информацию об остатках
+            if stock is not None:
+                if stock > 0:
+                    stock_info = f"📦 Товарный остаток: **{stock} шт.**\n\n"
+                else:
+                    stock_info = f"⚠️ Товарный остаток: **0 шт.**\n\n"
+            else:
+                stock_info = ""
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ **Найдено:** {variant_name}\n\n"
+                f"{photos_info}"
+                f"{stock_info}"
+                f"🎨 **Найдены другие размеры этого цвета:**\n{variants_list}\n\n"
+                f"📸 **Выберите область загрузки:**",
+                reply_markup=get_upload_scope_keyboard(),
+                parse_mode='Markdown'
+            )
         else:
-            stock_info = ""
-        
-        bot.send_message(
-            message.chat.id,
-            f"✅ **Найдено:** {variant_name}\n\n"
-            f"{photos_info}"
-            f"{stock_info}"
-            f"📸 **Теперь отправьте фото** (можно несколько)\n\n"
-            f"Когда закончите - нажмите **✅ Завершить**",
-            reply_markup=get_photo_upload_keyboard(),
-            parse_mode='Markdown'
-        )
+            # Нет связанных модификаций - обычный режим
+            user_states[user_id] = STATE_GET_PHOTOS
+            
+            # Формируем сообщение с информацией о фото
+            if images_count > 0:
+                photos_emoji = "📸" * min(images_count, 5)
+                photos_info = f"📷 Текущих фото: {images_count} {photos_emoji}\n"
+            else:
+                photos_info = "📷 Текущих фото: нет\n"
+            
+            # Добавляем информацию об остатках
+            if stock is not None:
+                if stock > 0:
+                    stock_info = f"📦 Товарный остаток: **{stock} шт.**\n\n"
+                else:
+                    stock_info = f"⚠️ Товарный остаток: **0 шт.**\n\n"
+            else:
+                stock_info = ""
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ **Найдено:** {variant_name}\n\n"
+                f"{photos_info}"
+                f"{stock_info}"
+                f"📸 **Теперь отправьте фото** (можно несколько)\n\n"
+                f"Когда закончите - нажмите **✅ Завершить**",
+                reply_markup=get_photo_upload_keyboard(),
+                parse_mode='Markdown'
+            )
         
         # Снимаем флаг обработки
         user_processing[user_id] = False
@@ -1476,22 +1684,58 @@ def process_photo_queue(user_id):
                 # Скачиваем файл
                 photo_bytes = bot.download_file(file_info.file_path)
                 
+                # Определяем во все модификации загружать или только в одну
+                target_variant_ids = data.get('target_variant_ids', [variant_id])
+                
                 # Показываем прогресс
-                progress_msg = f"⏳ Загружаю '{filename}'..."
+                if len(target_variant_ids) > 1:
+                    progress_msg = f"⏳ Загружаю '{filename}' в {len(target_variant_ids)} модификаций..."
+                else:
+                    progress_msg = f"⏳ Загружаю '{filename}'..."
                 if remaining > 0:
                     progress_msg += f"\n📋 Осталось в очереди: {remaining}"
                 
                 bot.send_message(message.chat.id, progress_msg)
                 
-                # Загружаем в МойСклад
-                success = upload_photo_to_variant(variant_id, photo_bytes, filename, variant_code)
+                # Загружаем в МойСклад (во все выбранные модификации)
+                success_count = 0
+                failed_variants = []
                 
-                if success:
-                    # Увеличиваем счетчик
+                for target_variant_id in target_variant_ids:
+                    # Получаем код модификации для логирования
+                    # Пытаемся найти код из same_color_variants или используем основной
+                    target_code = variant_code
+                    target_name = variant_name
+                    
+                    # Ищем код в связанных модификациях
+                    same_color_variants = data.get('same_color_variants', [])
+                    for v in same_color_variants:
+                        if v['id'] == target_variant_id:
+                            target_code = v['code']
+                            target_name = v['name']
+                            break
+                    
+                    success = upload_photo_to_variant(target_variant_id, photo_bytes, filename, target_code)
+    if success:
+                        success_count += 1
+                    else:
+                        failed_variants.append(target_code)
+                    
+                    # Небольшая пауза между загрузками в разные модификации
+                    if len(target_variant_ids) > 1:
+                        time.sleep(0.3)
+                
+                # Результат загрузки
+                if success_count == len(target_variant_ids):
+                    # Все успешно
                     user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
                     uploaded = user_data[user_id]['uploaded_count']
                     
-                    result_msg = f"✅ Фото '{filename}' загружено!\n\n"
+                    if len(target_variant_ids) > 1:
+                        result_msg = f"✅ Фото '{filename}' загружено в **{success_count} модификаций**!\n\n"
+                    else:
+                        result_msg = f"✅ Фото '{filename}' загружено!\n\n"
+                    
                     result_msg += f"📸 Загружено фото: {uploaded}"
                     
                     if remaining > 0:
@@ -1502,10 +1746,28 @@ def process_photo_queue(user_id):
                     bot.send_message(
                         message.chat.id,
                         result_msg,
-                        reply_markup=get_photo_upload_keyboard() if remaining == 0 else None
+                        reply_markup=get_photo_upload_keyboard() if remaining == 0 else None,
+                        parse_mode='Markdown'
                     )
                     save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, True)
-                else:
+                elif success_count > 0:
+                    # Частично успешно
+                    result_msg = f"⚠️ Фото '{filename}' загружено в {success_count} из {len(target_variant_ids)} модификаций"
+                    if failed_variants:
+                        result_msg += f"\n❌ Ошибки в: {', '.join(failed_variants)}"
+                    
+                    if remaining > 0:
+                        result_msg += f"\n⏳ Обрабатываю следующее ({remaining} в очереди)..."
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        result_msg,
+                        reply_markup=get_photo_upload_keyboard() if remaining == 0 else None,
+                        parse_mode='Markdown'
+                    )
+                    save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
+    else:
+                    # Все не удалось
                     bot.send_message(
                         message.chat.id,
                         f"❌ Ошибка при загрузке '{filename}'\n"
@@ -1723,7 +1985,7 @@ def handle_callback(call):
             # Показываем список с новым фильтром
             show_products_without_photos(fake_msg, page=0, with_stock_only=with_stock)
         
-        else:
+            else:
             bot.answer_callback_query(call.id, "Неизвестное действие")
     
     except Exception as e:
@@ -1769,7 +2031,7 @@ def check_and_update(send_notification=False):
                 
                 # Перезапуск с новой версией
                 os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
+        else:
                 logger.error(f"❌ Ошибка при обновлении: {pull_result.stderr}")
                 if send_notification and ADMIN_USER_ID:
                     try:
@@ -1780,7 +2042,7 @@ def check_and_update(send_notification=False):
                         )
                     except:
                         pass
-        else:
+    else:
             logger.info("✅ Бот уже использует последнюю версию")
             
     except subprocess.TimeoutExpired:
