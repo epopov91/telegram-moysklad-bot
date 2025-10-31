@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.8.3"
+BOT_VERSION = "5.8.4"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -230,12 +230,12 @@ def get_variant_by_code(code: str):
     for attempt in range(3):
         try:
             response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        response.raise_for_status()
+        data = response.json()
             
             if data.get('rows'):
                 return data['rows'][0]
-            return None
+        return None
             
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут при поиске {code}, попытка {attempt + 1}/3")
@@ -249,11 +249,11 @@ def get_variant_by_code(code: str):
                 import time
                 time.sleep(2)
                 continue
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Ошибка при поиске модификации {code}: {e}")
             break
     
-    return None
+        return None
 
 def get_variant_images(variant_id: str):
     """Получение списка фото модификации с повторными попытками"""
@@ -266,8 +266,8 @@ def get_variant_images(variant_id: str):
     for attempt in range(3):
         try:
             response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        response.raise_for_status()
+        data = response.json()
             
             return data.get('rows', [])
             
@@ -277,7 +277,7 @@ def get_variant_images(variant_id: str):
                 import time
                 time.sleep(1)
                 continue
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Ошибка при получении фото модификации {variant_id}: {e}")
             break
     
@@ -362,7 +362,7 @@ def get_variant_stock(variant_id: str):
                 total_stock = sum(row.get('stock', 0) for row in rows)
                 return int(total_stock)
             else:
-                return 0
+        return 0
 
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут при получении остатка (попытка {attempt + 1}/3)")
@@ -388,56 +388,84 @@ def get_product_variants(product_id: str):
         'Accept-Encoding': 'gzip'
     }
     
-    # Метод 1: Фильтр по product URL
-    url = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
-    filter_str = f"product=https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
-    params = {'filter': filter_str, 'limit': 500}
-    
+    # Метод 1: Через expand на продукте (самый надежный способ)
     try:
-        logger.debug(f"get_product_variants: запрос для product_id={product_id}, filter={filter_str}")
-        response = requests.get(url, headers=headers, params=params, timeout=15)
+        url_product = f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
+        logger.debug(f"get_product_variants: пробуем метод 1 через expand на продукте {product_id}")
+        response = requests.get(url_product, headers=headers, timeout=15)
         response.raise_for_status()
-        data = response.json()
-        rows = data.get('rows', [])
-        logger.info(f"get_product_variants: метод 1 вернул {len(rows)} модификаций для product_id={product_id}")
-        if len(rows) > 0:
-            return rows
+        product_data = response.json()
+        
+        # Получаем href вариантов из meta
+        variants_href = product_data.get('meta', {}).get('variants', {}).get('href')
+        if variants_href:
+            # Получаем варианты по ссылке
+            logger.debug(f"get_product_variants: получаем варианты по ссылке: {variants_href}")
+            response = requests.get(variants_href, headers=headers, timeout=15)
+            response.raise_for_status()
+            variants_data = response.json()
+            rows = variants_data.get('rows', [])
+            logger.info(f"get_product_variants: метод 1 вернул {len(rows)} модификаций через variants href")
+            if len(rows) > 0:
+                return rows
+        else:
+            logger.warning(f"get_product_variants: нет variants href в meta продукта")
     except Exception as e:
         logger.warning(f"get_product_variants: метод 1 ошибка: {e}")
     
-    # Метод 2: Фильтр по product.id (UUID)
+    # Метод 2: Получаем все варианты и фильтруем локально (медленно, но работает)
     try:
-        params2 = {'filter': f'product.id={product_id}', 'limit': 500}
-        logger.debug(f"get_product_variants: пробуем метод 2 с фильтром product.id={product_id}")
-        response = requests.get(url, headers=headers, params=params2, timeout=15)
+        logger.debug(f"get_product_variants: пробуем метод 2 - получаем все варианты и фильтруем")
+        url = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
+        all_variants = []
+        offset = 0
+        limit = 100
+        
+        while True:
+            params = {'limit': limit, 'offset': offset}
+            response = requests.get(url, headers=headers, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
-        rows = data.get('rows', [])
-        logger.info(f"get_product_variants: метод 2 вернул {len(rows)} модификаций")
-        if len(rows) > 0:
-            return rows
+            rows = data.get('rows', [])
+            
+            if not rows:
+                break
+            
+            # Фильтруем по product_id
+            for variant in rows:
+                variant_product = variant.get('product')
+                if variant_product:
+                    # Извлекаем product_id из variant
+                    if isinstance(variant_product, dict):
+                        href = variant_product.get('meta', {}).get('href', '') or variant_product.get('href', '')
+                        variant_product_id = href.split('/product/')[-1].split('?')[0] if href else None
+                    else:
+                        variant_product_id = str(variant_product)
+                    
+                    if variant_product_id == product_id:
+                        all_variants.append(variant)
+            
+            # Проверяем, есть ли еще страницы
+            meta = data.get('meta', {})
+            total = meta.get('size', 0)
+            if offset + len(rows) >= total:
+                break
+            
+            offset += limit
+            
+            # Ограничиваем поиск 5000 вариантами (50 запросов максимум)
+            if offset >= 5000:
+                logger.warning(f"get_product_variants: достигнут лимит поиска (5000 вариантов)")
+                break
+        
+        logger.info(f"get_product_variants: метод 2 нашел {len(all_variants)} модификаций через полный перебор")
+        if len(all_variants) > 0:
+            return all_variants
     except Exception as e:
         logger.warning(f"get_product_variants: метод 2 ошибка: {e}")
     
-    # Метод 3: Через expand на продукте
-    try:
-        url_product = f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
-        params3 = {'expand': 'variants', 'limit': 500}
-        logger.debug(f"get_product_variants: пробуем метод 3 через expand на продукте")
-        response = requests.get(url_product, headers=headers, params=params3, timeout=15)
-        response.raise_for_status()
-        product_data = response.json()
-        variants = product_data.get('variants', {})
-        if variants and isinstance(variants, dict):
-            rows = variants.get('rows', [])
-            logger.info(f"get_product_variants: метод 3 вернул {len(rows)} модификаций")
-            if len(rows) > 0:
-                return rows
-    except Exception as e:
-        logger.warning(f"get_product_variants: метод 3 ошибка: {e}")
-    
     logger.warning(f"get_product_variants: все методы вернули 0 модификаций для product_id={product_id}")
-    return []
+        return []
 
 def find_same_color_variants(variant):
     """Находит все модификации того же товара и того же цвета, но разных размеров"""
@@ -668,10 +696,10 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
     for attempt in range(3):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
+        response.raise_for_status()
             
             logger.info(f"Фото {filename} успешно загружено для модификации {variant_id}")
-            return True
+        return True
             
         except requests.exceptions.Timeout:
             logger.warning(f"Таймаут загрузки фото, попытка {attempt + 1}/3")
@@ -685,11 +713,11 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
                 import time
                 time.sleep(3)
                 continue
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке фото: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фото: {e}")
             break
     
-    return False
+        return False
 
 # =========================
 # ПРОВЕРКА АДМИНА
@@ -885,7 +913,7 @@ def cmd_update(message):
             
             # Перезапуск (правильная команда для Windows и Unix)
             os.execv(sys.executable, [sys.executable] + sys.argv)
-        else:
+    else:
             bot.send_message(message.chat.id, f"❌ Ошибка:\n```\n{result.stderr}\n```", parse_mode='Markdown')
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
@@ -1751,7 +1779,7 @@ def process_photo_queue(user_id):
                             break
                     
                     success = upload_photo_to_variant(target_variant_id, photo_bytes, filename, target_code)
-                    if success:
+    if success:
                         success_count += 1
                     else:
                         failed_variants.append(target_code)
@@ -1801,7 +1829,7 @@ def process_photo_queue(user_id):
                         parse_mode='Markdown'
                     )
                     save_upload_to_db(user_id, message.from_user.username, variant_code, variant_name, filename, False)
-                else:
+    else:
                     # Все не удалось
                     bot.send_message(
                         message.chat.id,
@@ -2020,7 +2048,7 @@ def handle_callback(call):
             # Показываем список с новым фильтром
             show_products_without_photos(fake_msg, page=0, with_stock_only=with_stock)
         
-        else:
+            else:
             bot.answer_callback_query(call.id, "Неизвестное действие")
     
     except Exception as e:
@@ -2066,7 +2094,7 @@ def check_and_update(send_notification=False):
                 
                 # Перезапуск с новой версией
                 os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
+        else:
                 logger.error(f"❌ Ошибка при обновлении: {pull_result.stderr}")
                 if send_notification and ADMIN_USER_ID:
                     try:
@@ -2077,7 +2105,7 @@ def check_and_update(send_notification=False):
                         )
                     except:
                         pass
-        else:
+    else:
             logger.info("✅ Бот уже использует последнюю версию")
             
     except subprocess.TimeoutExpired:
