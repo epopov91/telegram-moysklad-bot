@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Версия бота
-BOT_VERSION = "5.8.1"
+BOT_VERSION = "5.8.3"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -383,12 +383,13 @@ def get_variant_stock(variant_id: str):
 
 def get_product_variants(product_id: str):
     """Получение всех модификаций товара по product_id"""
-    url = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
     headers = {
         'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
         'Accept-Encoding': 'gzip'
     }
     
+    # Метод 1: Фильтр по product URL
+    url = "https://api.moysklad.ru/api/remap/1.2/entity/variant"
     filter_str = f"product=https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
     params = {'filter': filter_str, 'limit': 500}
     
@@ -398,14 +399,45 @@ def get_product_variants(product_id: str):
         response.raise_for_status()
         data = response.json()
         rows = data.get('rows', [])
-        logger.info(f"get_product_variants: API вернул {len(rows)} модификаций для product_id={product_id}")
-        if len(rows) == 0:
-            logger.warning(f"get_product_variants: получено 0 модификаций, возможно товар без модификаций или ошибка фильтра")
-            logger.debug(f"get_product_variants: полный ответ API: {data}")
-        return rows
+        logger.info(f"get_product_variants: метод 1 вернул {len(rows)} модификаций для product_id={product_id}")
+        if len(rows) > 0:
+            return rows
     except Exception as e:
-        logger.error(f"Ошибка при получении модификаций товара {product_id}: {e}", exc_info=True)
-        return []
+        logger.warning(f"get_product_variants: метод 1 ошибка: {e}")
+    
+    # Метод 2: Фильтр по product.id (UUID)
+    try:
+        params2 = {'filter': f'product.id={product_id}', 'limit': 500}
+        logger.debug(f"get_product_variants: пробуем метод 2 с фильтром product.id={product_id}")
+        response = requests.get(url, headers=headers, params=params2, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        rows = data.get('rows', [])
+        logger.info(f"get_product_variants: метод 2 вернул {len(rows)} модификаций")
+        if len(rows) > 0:
+            return rows
+    except Exception as e:
+        logger.warning(f"get_product_variants: метод 2 ошибка: {e}")
+    
+    # Метод 3: Через expand на продукте
+    try:
+        url_product = f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}"
+        params3 = {'expand': 'variants', 'limit': 500}
+        logger.debug(f"get_product_variants: пробуем метод 3 через expand на продукте")
+        response = requests.get(url_product, headers=headers, params=params3, timeout=15)
+        response.raise_for_status()
+        product_data = response.json()
+        variants = product_data.get('variants', {})
+        if variants and isinstance(variants, dict):
+            rows = variants.get('rows', [])
+            logger.info(f"get_product_variants: метод 3 вернул {len(rows)} модификаций")
+            if len(rows) > 0:
+                return rows
+    except Exception as e:
+        logger.warning(f"get_product_variants: метод 3 ошибка: {e}")
+    
+    logger.warning(f"get_product_variants: все методы вернули 0 модификаций для product_id={product_id}")
+    return []
 
 def find_same_color_variants(variant):
     """Находит все модификации того же товара и того же цвета, но разных размеров"""
