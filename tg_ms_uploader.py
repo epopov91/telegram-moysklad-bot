@@ -393,12 +393,18 @@ def get_product_variants(product_id: str):
     params = {'filter': filter_str, 'limit': 500}
     
     try:
+        logger.debug(f"get_product_variants: запрос для product_id={product_id}, filter={filter_str}")
         response = requests.get(url, headers=headers, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
-        return data.get('rows', [])
+        rows = data.get('rows', [])
+        logger.info(f"get_product_variants: API вернул {len(rows)} модификаций для product_id={product_id}")
+        if len(rows) == 0:
+            logger.warning(f"get_product_variants: получено 0 модификаций, возможно товар без модификаций или ошибка фильтра")
+            logger.debug(f"get_product_variants: полный ответ API: {data}")
+        return rows
     except Exception as e:
-        logger.error(f"Ошибка при получении модификаций товара {product_id}: {e}")
+        logger.error(f"Ошибка при получении модификаций товара {product_id}: {e}", exc_info=True)
         return []
 
 def find_same_color_variants(variant):
@@ -408,9 +414,22 @@ def find_same_color_variants(variant):
         logger.debug("find_same_color_variants: нет product в варианте")
         return []
     
-    product_id = product.get('meta', {}).get('href', '').split('/product/')[-1].split('?')[0]
+    # Проверяем формат product (может быть объект или строка)
+    logger.debug(f"find_same_color_variants: product тип: {type(product)}, значение: {product}")
+    
+    # Если product - это словарь с meta
+    if isinstance(product, dict):
+        href = product.get('meta', {}).get('href', '')
+        if not href:
+            # Пробуем прямой href
+            href = product.get('href', '')
+        product_id = href.split('/product/')[-1].split('?')[0] if href else None
+    else:
+        # Если product - это строка (UUID)
+        product_id = str(product) if product else None
+    
     if not product_id:
-        logger.debug("find_same_color_variants: не удалось извлечь product_id")
+        logger.warning(f"find_same_color_variants: не удалось извлечь product_id из product={product}")
         return []
     
     logger.info(f"find_same_color_variants: ищем модификации для product_id={product_id}, вариант={variant.get('code')}")
