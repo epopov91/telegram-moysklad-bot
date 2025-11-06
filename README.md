@@ -25,73 +25,60 @@
 - Токен Telegram бота (получить у [@BotFather](https://t.me/BotFather))
 - API токен МойСклад
 
-## 🔧 Установка на Windows
+## 🔧 Установка на VPS (Ubuntu)
 
-### Шаг 1: Установка Python
+### Шаг 1: Клонирование репозитория
 
-1. Скачайте Python с [python.org](https://www.python.org/downloads/)
-2. При установке **обязательно** поставьте галочку "Add Python to PATH"
-3. Проверьте установку в командной строке:
-   ```cmd
-   python --version
+```bash
+git clone https://github.com/epopov91/telegram-moysklad-bot.git
+cd telegram-moysklad-bot
+```
+
+### Шаг 2: Настройка окружения
+
+1. Создайте файл `.env` в папке с ботом:
+   ```bash
+   nano .env
    ```
 
-### Шаг 2: Клонирование репозитория
-
-1. Установите Git: [git-scm.com](https://git-scm.com/download/win)
-2. Откройте командную строку (cmd) или PowerShell
-3. Перейдите в нужную папку:
-   ```cmd
-   cd C:\Users\ВашеИмя\Documents
-   ```
-4. Клонируйте репозиторий:
-   ```cmd
-   git clone https://github.com/ВАШ_ЮЗЕРНЕЙМ/НАЗВАНИЕ_РЕПО.git
-   cd НАЗВАНИЕ_РЕПО
-   ```
-
-### Шаг 3: Настройка окружения
-
-1. Создайте файл `.env` в папке с ботом (скопируйте `.env.example`):
-   ```cmd
-   copy .env.example .env
-   ```
-
-2. Откройте файл `.env` в блокноте и добавьте ваши токены:
+2. Добавьте ваши токены:
    ```
    TELEGRAM_BOT_TOKEN=ваш_токен_от_BotFather
    MOYSKLAD_API_TOKEN=ваш_токен_МойСклад
-   ADMIN_USER_ID=ваш_telegram_id (опционально, для админ-команд)
-   GOOGLE_DRIVE_ROOT_FOLDER_ID=id_корневой_папки (для загрузки видео)
+   ADMIN_USER_ID=ваш_telegram_id
+   GOOGLE_DRIVE_ROOT_FOLDER_ID=id_корневой_папки
    ```
    
    **Для загрузки видео в Google Drive:**
-   - Скопируйте файлы `credentials.json` и `token_drive.json` из папки "Google таблица" в папку с ботом
+   - Скопируйте файлы `credentials.json` и `token_drive.json` в папку с ботом
    - Или настройте OAuth2 авторизацию Google Drive (см. инструкцию в папке "Google таблица/OAUTH2_DRIVE_SETUP.md")
 
-### Шаг 4: Установка зависимостей
+### Шаг 3: Установка зависимостей
 
-```cmd
-pip install -r requirements.txt
+```bash
+pip3 install -r requirements.txt
 ```
 
-### Шаг 5: Запуск бота
+### Шаг 4: Запуск бота
 
-```cmd
-python tg_ms_uploader.py
+```bash
+python3 tg_ms_uploader.py
 ```
 
-Бот запустится и начнет работать! В консоли появятся логи.
+Или используйте systemd сервис (см. `setup_vps.sh`).
 
 ## 🔄 Обновление бота
 
-Когда код обновится в GitHub, на Windows выполните:
+Когда код обновится в GitHub, на сервере выполните:
 
-```cmd
+```bash
 git pull
 ```
 
-Затем перезапустите бота (Ctrl+C для остановки, затем снова запустите).
+Затем перезапустите бота через команду `/restart` в Telegram или через systemd:
+```bash
+sudo systemctl restart telegram-bot
+```
 
 ## 💡 Использование
 
@@ -117,45 +104,37 @@ git pull
 - `/update` - **обновить код из GitHub и перезапустить**
 - `/restart` - перезапустить бота
 
-## 🛠️ Автозапуск на Windows (опционально)
+## 🛠️ Автозапуск на VPS (systemd)
 
-### Вариант 1: Создать .bat файл
+Используйте скрипт `setup_vps.sh` для автоматической настройки systemd сервиса:
 
-Создайте файл `start_bot.bat` со следующим содержимым:
-
-```batch
-@echo off
-cd /d "%~dp0"
-python tg_ms_uploader.py
-pause
+```bash
+chmod +x setup_vps.sh
+./setup_vps.sh
 ```
 
-Теперь можно запускать бота двойным кликом по файлу.
-
-### Вариант 2: Добавить в автозагрузку
-
-1. Нажмите Win+R, введите `shell:startup`
-2. Создайте ярлык для `start_bot.bat` в этой папке
-3. Бот будет запускаться при включении Windows
+Или настройте вручную (см. инструкции в `setup_vps.sh`).
 
 ## 🐛 Решение проблем
 
 **Бот не запускается:**
 - Проверьте, что файл `.env` создан и содержит правильные токены
-- Убедитесь, что установлены все зависимости: `pip install -r requirements.txt`
+- Убедитесь, что установлены все зависимости: `pip3 install -r requirements.txt`
+- Проверьте логи: `journalctl -u telegram-bot -f`
 
-**"python" не найден:**
-- Переустановите Python с галочкой "Add to PATH"
-- Или используйте `py` вместо `python`
+**Ошибки Google Drive:**
+- Убедитесь, что файлы `credentials.json` и `token_drive.json` находятся в папке с ботом
+- Проверьте права доступа к файлам: `chmod 600 credentials.json token_drive.json`
 
 **Бот не отвечает:**
-- Проверьте, что бот запущен (смотрите логи в консоли)
+- Проверьте статус сервиса: `sudo systemctl status telegram-bot`
+- Проверьте логи: `journalctl -u telegram-bot -n 50`
 - Убедитесь, что токен Telegram правильный
 - Проверьте интернет-соединение
 
 ## 📝 Разработка
 
-При редактировании кода на Mac:
+При редактировании кода:
 
 ```bash
 git add .
@@ -163,10 +142,11 @@ git commit -m "Описание изменений"
 git push
 ```
 
-На Windows для получения обновлений:
+На сервере для получения обновлений:
 
-```cmd
+```bash
 git pull
+sudo systemctl restart telegram-bot
 ```
 
 ---
