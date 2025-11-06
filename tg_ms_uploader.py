@@ -940,7 +940,8 @@ def cmd_update(message):
     """Обновление бота из Git"""
     try:
         bot.send_message(message.chat.id, "🔄 Обновление кода из GitHub...")
-        result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
+        result = subprocess.run(['git', 'pull'], capture_output=True, text=True, 
+                              cwd=os.path.dirname(os.path.abspath(__file__)))
         
         if result.returncode == 0:
             bot.send_message(
@@ -956,8 +957,26 @@ def cmd_update(message):
             os.execv(sys.executable, [sys.executable] + sys.argv)
         else:
             bot.send_message(message.chat.id, f"❌ Ошибка:\n```\n{result.stderr}\n```", parse_mode='Markdown')
+    except FileNotFoundError:
+        error_msg = (
+            "❌ **Git не установлен!**\n\n"
+            "Для обновления через бота необходимо установить git:\n"
+            "```bash\n"
+            "sudo apt-get update\n"
+            "sudo apt-get install git\n"
+            "```\n\n"
+            "Или обновите вручную на сервере:\n"
+            "```bash\n"
+            "cd /path/to/bot\n"
+            "git pull\n"
+            "sudo systemctl restart telegram-bot\n"
+            "```"
+        )
+        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
+        logger.error("Git не установлен на сервере")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        logger.error(f"Ошибка при обновлении: {e}", exc_info=True)
 
 @bot.message_handler(commands=['restart'])
 def cmd_restart(message):
@@ -1009,10 +1028,23 @@ def cmd_fix(message):
         bot.send_message(message.chat.id, "🔧 **Автоматическое исправление...**\n\n1️⃣ Обновление кода из GitHub...")
         
         # Шаг 1: Git pull
-        result = subprocess.run(['git', 'pull'], capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)))
-        
-        if result.returncode != 0:
-            bot.send_message(message.chat.id, f"❌ Ошибка при обновлении:\n```\n{result.stderr}\n```", parse_mode='Markdown')
+        try:
+            result = subprocess.run(['git', 'pull'], capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)))
+            
+            if result.returncode != 0:
+                bot.send_message(message.chat.id, f"❌ Ошибка при обновлении:\n```\n{result.stderr}\n```", parse_mode='Markdown')
+                return
+        except FileNotFoundError:
+            error_msg = (
+                "❌ **Git не установлен!**\n\n"
+                "Установите git на сервере:\n"
+                "```bash\n"
+                "sudo apt-get update && sudo apt-get install git\n"
+                "```\n\n"
+                "Или обновите вручную и перезапустите бота."
+            )
+            bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
+            logger.error("Git не установлен на сервере")
             return
         
         bot.send_message(message.chat.id, f"✅ Код обновлен:\n```\n{result.stdout}\n```\n\n2️⃣ Проверка зависимостей...", parse_mode='Markdown')
@@ -2410,6 +2442,13 @@ def check_and_update(send_notification=False):
     """Автоматическая проверка и установка обновлений"""
     try:
         logger.info("🔍 Проверка обновлений из GitHub...")
+        
+        # Проверяем наличие git
+        try:
+            subprocess.run(['git', '--version'], capture_output=True, text=True, timeout=5, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            logger.warning("⚠️ Git не установлен, пропускаю проверку обновлений")
+            return
         
         # Делаем git fetch
         subprocess.run(['git', 'fetch'], capture_output=True, text=True, timeout=10)
