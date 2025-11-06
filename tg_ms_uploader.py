@@ -9,8 +9,10 @@ import subprocess
 import sqlite3
 import threading
 import time
+import re
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Tuple
 from dotenv import load_dotenv
 import telebot
 from telebot import types
@@ -21,6 +23,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 MOYSKLAD_API_TOKEN = os.getenv('MOYSKLAD_API_TOKEN')
 ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')  # ID администратора для управления ботом
+GOOGLE_DRIVE_ROOT_FOLDER_ID = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID', '1LD4-cJSccuiLDsczuSO0foJl5S75S_co')
 
 # Проверка наличия токенов
 if not TELEGRAM_BOT_TOKEN or not MOYSKLAD_API_TOKEN:
@@ -38,8 +41,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Добавляем путь к папке Google таблица для импорта модулей
+GOOGLE_TABLE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'Google таблица')
+if GOOGLE_TABLE_PATH not in sys.path:
+    sys.path.insert(0, GOOGLE_TABLE_PATH)
+
+# Импорты для Google Drive (с обработкой ошибок)
+try:
+    from oauth2_drive_auth import get_drive_service
+    from consolidate_and_download_photos import OAuth2DriveAPI
+    from googleapiclient.http import MediaIoBaseUpload
+    GOOGLE_DRIVE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Google Drive модули не найдены: {e}. Загрузка видео будет недоступна.")
+    GOOGLE_DRIVE_AVAILABLE = False
+
 # Версия бота
-BOT_VERSION = "5.7.2"
+BOT_VERSION = "5.8.0"
 BOT_START_TIME = datetime.now()
 
 # Настройки
@@ -54,6 +72,8 @@ user_data = {}
 user_processing = {}  # Флаг обработки запроса
 user_photo_queue = {}  # Очередь фотографий для каждого пользователя
 user_queue_processing = {}  # Флаг обработки очереди
+user_video_queue = {}  # Очередь видео для каждого пользователя
+user_video_processing = {}  # Флаг обработки очереди видео
 
 # Константы состояний
 STATE_MAIN_MENU = 0
@@ -62,9 +82,11 @@ STATE_GET_PHOTOS = 2
 STATE_STATISTICS = 3
 STATE_MANAGEMENT = 4
 STATE_NO_PHOTO_LIST = 5
+STATE_GET_VIDEO = 6
 
 # Константы кнопок
 BTN_UPLOAD = "📸 Загрузить фото"
+BTN_UPLOAD_VIDEO = "🎥 Загрузить видео"
 BTN_STATS = "📊 Статистика"
 BTN_NO_PHOTO = "📋 Товары без фото"
 BTN_MANAGE = "⚙️ Управление"
@@ -84,9 +106,9 @@ BTN_ANOTHER_PRODUCT = "🔄 Другой товар"
 def get_main_menu_keyboard():
     """Главное меню"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.row(BTN_UPLOAD, BTN_STATS)
-    keyboard.row(BTN_NO_PHOTO, BTN_MANAGE)
-    keyboard.row(BTN_HELP)
+    keyboard.row(BTN_UPLOAD, BTN_UPLOAD_VIDEO)
+    keyboard.row(BTN_STATS, BTN_NO_PHOTO)
+    keyboard.row(BTN_MANAGE, BTN_HELP)
     return keyboard
 
 def get_code_input_keyboard():
@@ -104,6 +126,13 @@ def get_product_info_keyboard():
 
 def get_photo_upload_keyboard():
     """Клавиатура во время загрузки фото"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(BTN_FINISH)
+    keyboard.row(BTN_ANOTHER_PRODUCT, BTN_BACK)
+    return keyboard
+
+def get_video_upload_keyboard():
+    """Клавиатура во время загрузки видео"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(BTN_FINISH)
     keyboard.row(BTN_ANOTHER_PRODUCT, BTN_BACK)
@@ -533,6 +562,205 @@ def upload_photo_to_variant(variant_id: str, photo_bytes: bytes, filename: str, 
     return False
 
 # =========================
+# GOOGLE DRIVE API
+# =========================
+
+# Глобальный кэш для Drive API
+_drive_api_cache = None
+
+def get_drive_api():
+    """Получить экземпляр OAuth2DriveAPI (с кэшированием)"""
+    global _drive_api_cache
+    
+    if not GOOGLE_DRIVE_AVAILABLE:
+        logger.error("Google Drive API недоступен")
+        return None
+    
+    if _drive_api_cache is None:
+        try:
+            drive_service = get_drive_service()
+            _drive_api_cache = OAuth2DriveAPI(drive_service)
+            logger.info("Google Drive API инициализирован")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации Google Drive API: {e}")
+            return None
+    
+    return _drive_api_cache
+
+def extract_color_and_size(name: str) -> Tuple[Optional[str], Optional[str]]:
+    """Извлечь цвет и размер из названия модификации
+    
+    Форматы: 
+    - "Товар (Цвет, Размер)" или "Товар (Размер, Цвет)"
+    - "Товар (Размер)" - только размер, без цвета
+    Размер может быть: число (104, 46), диапазон (40-44), или буква (S, M, L)
+    
+    Returns:
+        (color, size) - кортеж с цветом и размером, или (None, None) если не удалось распарсить
+    """
+    idx = name.find('(')
+    if idx == -1:
+        return None, None
+    
+    inside = name[idx + 1:name.rfind(')')].strip()
+    if not inside:
+        return None, None
+    
+    parts = [s.strip() for s in inside.split(',') if s.strip()]
+    
+    # Если в скобках только один элемент - проверяем, является ли он размером
+    if len(parts) == 1:
+        single = parts[0]
+        single_clean = single.replace('см', '').replace(' ', '').upper()
+        
+        # Проверяем, является ли это размером
+        is_size = False
+        # Число или диапазон
+        if re.fullmatch(r'\d+[\-–]?\d*', single_clean):
+            is_size = True
+        # Размеры: одна буква (S, M, L) или многосимвольные (XS, XL, XXL и т.д.)
+        elif re.fullmatch(r'[X]*[SLM]', single_clean) or single_clean in ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']:
+            is_size = True
+        
+        if is_size:
+            return None, single  # Цвет = None, размер = single
+        else:
+            return single, None  # Цвет = single, размер = None
+    
+    # Если в скобках два или больше элементов
+    if len(parts) < 2:
+        return None, None
+    
+    first = parts[0]
+    second = parts[1] if len(parts) > 1 else None
+    
+    # Проверяем, является ли первое значение размером
+    is_first_size = False
+    first_clean = first.replace('см', '').replace(' ', '').upper()
+    # Число или диапазон
+    if re.fullmatch(r'\d+[\-–]?\d*', first_clean):
+        is_first_size = True
+    # Размеры: одна буква (S, M, L) или многосимвольные (XS, XL, XXL и т.д.)
+    elif re.fullmatch(r'[X]*[SLM]', first_clean) or first_clean in ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']:
+        is_first_size = True
+    
+    if is_first_size:
+        size = first
+        color = second if second else None
+    else:
+        color = first
+        size = second if second else None
+    
+    return color, size
+
+def get_parent_code_from_variant(variant: dict) -> Optional[str]:
+    """Получить код родительского товара из варианта"""
+    try:
+        parent_href = None
+        if variant.get('product') and variant['product'].get('meta'):
+            parent_href = variant['product']['meta'].get('href')
+        
+        if not parent_href:
+            return None
+        
+        # Получаем код родителя через API
+        headers = {
+            'Authorization': f'Bearer {MOYSKLAD_API_TOKEN}',
+            'Accept-Encoding': 'gzip'
+        }
+        
+        response = requests.get(parent_href, headers=headers, timeout=10)
+        if response.status_code == 200:
+            product = response.json()
+            parent_code = product.get('code')
+            if parent_code:
+                logger.debug(f"Получен код родителя: {parent_code}")
+                return parent_code
+        
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка получения кода родителя: {e}")
+        return None
+
+def ensure_video_folder_structure(parent_code: str, color: Optional[str], drive_api) -> Optional[str]:
+    """Создать структуру папок для видео: root_folder/код_родителя/цвет/Видео/
+    
+    Returns:
+        folder_id папки "Видео" или None при ошибке
+    """
+    if not drive_api:
+        logger.error("Drive API недоступен")
+        return None
+    
+    try:
+        root_folder_id = GOOGLE_DRIVE_ROOT_FOLDER_ID
+        
+        # 1. Найти/создать папку родителя в корневой папке
+        parent_folder_id = drive_api.ensure_folder_exists(parent_code, root_folder_id)
+        logger.debug(f"Папка родителя '{parent_code}': {parent_folder_id}")
+        
+        # 2. Найти/создать папку цвета в папке родителя
+        color_name = color if color else 'Без цвета'
+        color_folder_id = drive_api.ensure_folder_exists(color_name, parent_folder_id)
+        logger.debug(f"Папка цвета '{color_name}': {color_folder_id}")
+        
+        # 3. Найти/создать папку "Видео" в папке цвета
+        video_folder_id = drive_api.ensure_folder_exists('Видео', color_folder_id)
+        logger.debug(f"Папка 'Видео': {video_folder_id}")
+        
+        return video_folder_id
+        
+    except Exception as e:
+        logger.error(f"Ошибка создания структуры папок для видео: {e}")
+        return None
+
+def upload_video_to_drive(video_bytes: bytes, filename: str, folder_id: str, drive_api) -> bool:
+    """Загрузить видео в Google Drive
+    
+    Args:
+        video_bytes: байты видео
+        filename: имя файла
+        folder_id: ID папки в Google Drive
+        drive_api: экземпляр OAuth2DriveAPI
+    
+    Returns:
+        True если успешно, False при ошибке
+    """
+    if not drive_api:
+        logger.error("Drive API недоступен")
+        return False
+    
+    try:
+        # Определяем MIME тип
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type or not mime_type.startswith('video/'):
+            mime_type = 'video/mp4'  # По умолчанию
+        
+        file_metadata = {
+            'name': filename,
+            'parents': [folder_id]
+        }
+        
+        media = MediaIoBaseUpload(
+            io.BytesIO(video_bytes),
+            mimetype=mime_type,
+            resumable=True
+        )
+        
+        file = drive_api.drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+        
+        logger.info(f"Видео '{filename}' успешно загружено в Google Drive (ID: {file.get('id')})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка загрузки видео '{filename}' в Google Drive: {e}")
+        return False
+
+# =========================
 # ПРОВЕРКА АДМИНА
 # =========================
 
@@ -898,7 +1126,12 @@ def handle_text(message):
         return
     
     if text == BTN_ANOTHER_PRODUCT or text == BTN_ANOTHER_CODE or text == "🔄 Другой товар" or text == "🔄 Другой код":
-        start_upload_flow(message)
+        # Проверяем тип загрузки (фото или видео)
+        upload_type = user_data.get(user_id, {}).get('upload_type', 'photo')
+        if upload_type == 'video':
+            start_video_upload_flow(message)
+        else:
+            start_upload_flow(message)
         return
     
     # Обработка кнопок главного меню
@@ -907,6 +1140,9 @@ def handle_text(message):
         if text == BTN_UPLOAD:
             logger.info(f"[HANDLER: handle_text] -> BTN_UPLOAD")
             start_upload_flow(message)
+        elif text == BTN_UPLOAD_VIDEO:
+            logger.info(f"[HANDLER: handle_text] -> BTN_UPLOAD_VIDEO")
+            start_video_upload_flow(message)
         elif text == BTN_STATS:
             logger.info(f"[HANDLER: handle_text] -> BTN_STATS")
             show_statistics(message)
@@ -932,15 +1168,24 @@ def handle_text(message):
     # Ввод кода модификации
     if state == STATE_GET_CODE:
         logger.info(f"[HANDLER: handle_text] -> State: GET_CODE, Text: '{text}'")
+        # Проверяем тип загрузки (фото или видео)
+        upload_type = user_data.get(user_id, {}).get('upload_type', 'photo')
+        
         # Проверяем, не кнопка ли это из истории
         if text.startswith("🔖 "):
             code = text.replace("🔖 ", "").strip()
-            logger.info(f"[HANDLER: handle_text] -> История: код {code}")
-            handle_code_input_text(message, code)
+            logger.info(f"[HANDLER: handle_text] -> История: код {code}, тип: {upload_type}")
+            if upload_type == 'video':
+                handle_code_input_text_for_video(message, code)
+            else:
+                handle_code_input_text(message, code)
         else:
             # Обычный ввод кода
-            logger.info(f"[HANDLER: handle_text] -> Ввод кода: {text}")
-            handle_code_input_text(message, text)
+            logger.info(f"[HANDLER: handle_text] -> Ввод кода: {text}, тип: {upload_type}")
+            if upload_type == 'video':
+                handle_code_input_text_for_video(message, text)
+            else:
+                handle_code_input_text(message, text)
         return
     
     # Загрузка фото - НЕ ПРИНИМАЕМ ТЕКСТ, только фото или кнопки
@@ -949,6 +1194,15 @@ def handle_text(message):
             message.chat.id, 
             "📸 Отправьте ФОТО товара\n\nИли используйте кнопки ниже:",
             reply_markup=get_photo_upload_keyboard()
+        )
+        return
+    
+    # Загрузка видео - НЕ ПРИНИМАЕМ ТЕКСТ, только видео или кнопки
+    if state == STATE_GET_VIDEO:
+        bot.send_message(
+            message.chat.id, 
+            "🎥 Отправьте ВИДЕО товара\n\nИли используйте кнопки ниже:",
+            reply_markup=get_video_upload_keyboard()
         )
         return
     
@@ -1220,15 +1474,26 @@ def finish_upload(message):
     
     variant_name = data.get('variant_name', 'товара')
     uploaded_count = data.get('uploaded_count', 0)
+    upload_type = data.get('upload_type', 'photo')
     
-    bot.send_message(
-        message.chat.id,
-        f"✅ **Загрузка завершена!**\n\n"
-        f"Товар: {variant_name}\n"
-        f"Загружено фото: {uploaded_count}",
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode='Markdown'
-    )
+    if upload_type == 'video':
+        bot.send_message(
+            message.chat.id,
+            f"✅ **Загрузка завершена!**\n\n"
+            f"Товар: {variant_name}\n"
+            f"Загружено видео: {uploaded_count}",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode='Markdown'
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            f"✅ **Загрузка завершена!**\n\n"
+            f"Товар: {variant_name}\n"
+            f"Загружено фото: {uploaded_count}",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode='Markdown'
+        )
     
     user_states[user_id] = STATE_MAIN_MENU
 
@@ -1237,6 +1502,12 @@ def handle_photo(message):
     """Обработка фото"""
     user_id = message.from_user.id
     state = user_states.get(user_id, STATE_MAIN_MENU)
+    
+    # Проверяем, что это не видео документ
+    if message.content_type == 'document':
+        if message.document.mime_type and message.document.mime_type.startswith('video/'):
+            # Это видео, пропускаем обработку (будет обработано handle_video)
+            return
     
     # Фото принимаем ТОЛЬКО в состоянии загрузки
     if state == STATE_GET_PHOTOS:
@@ -1537,6 +1808,407 @@ def process_photo_queue(user_id):
         if user_id in user_photo_queue and len(user_photo_queue[user_id]) == 0:
             del user_photo_queue[user_id]
 
+# =========================
+# ОБРАБОТКА ВИДЕО
+# =========================
+
+def start_video_upload_flow(message):
+    """Начать процесс загрузки видео"""
+    user_id = message.from_user.id
+    
+    if not GOOGLE_DRIVE_AVAILABLE:
+        bot.send_message(
+            message.chat.id,
+            "❌ **Загрузка видео недоступна**\n\n"
+            "Google Drive API не настроен. Обратитесь к администратору.",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+    
+    user_states[user_id] = STATE_GET_CODE
+    user_data[user_id] = user_data.get(user_id, {})
+    user_data[user_id]['upload_type'] = 'video'  # Помечаем что это загрузка видео
+    
+    # Проверяем историю
+    history = user_data.get(user_id, {}).get('history', [])
+    
+    if history:
+        keyboard = get_history_keyboard(user_id)
+        bot.send_message(
+            message.chat.id,
+            "📝 **Введите код модификации** или выберите из истории:\n\n"
+            "Можно ввести код вручную или нажать на один из недавних:",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    else:
+        keyboard = get_code_input_keyboard()
+        bot.send_message(
+            message.chat.id,
+            "📝 **Введите код модификации товара:**",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+
+def handle_code_input_text_for_video(message, code):
+    """Обработка ввода кода модификации для загрузки видео"""
+    user_id = message.from_user.id
+    
+    # ПРОВЕРКА: если уже обрабатывается запрос - игнорируем
+    if user_processing.get(user_id, False):
+        bot.send_message(
+            message.chat.id,
+            "⏳ **Подождите!**\n\nЯ обрабатываю предыдущий запрос.\n"
+            "Дождитесь ответа или нажмите 🔙 для отмены.",
+            parse_mode='Markdown',
+            reply_markup=get_code_input_keyboard()
+        )
+        return
+    
+    code = code.strip()
+    
+    # Устанавливаем флаг обработки
+    user_processing[user_id] = True
+    
+    # Показываем что ищем
+    search_msg = bot.send_message(message.chat.id, f"🔍 Ищу товар с кодом: {code}...")
+    
+    try:
+        variant = get_variant_by_code(code)
+        
+        if not variant:
+            try:
+                bot.delete_message(message.chat.id, search_msg.message_id)
+            except:
+                pass
+            
+            bot.send_message(
+                message.chat.id, 
+                f"❌ Товар с кодом **{code}** не найден\n\n"
+                f"Проверьте код и попробуйте еще раз:",
+                reply_markup=get_code_input_keyboard(),
+                parse_mode='Markdown'
+            )
+            user_states[user_id] = STATE_GET_CODE
+            user_processing[user_id] = False
+            return
+        
+        variant_name = variant.get('name', 'Без названия')
+        variant_id = variant['id']
+        
+        # Извлекаем цвет и размер
+        color, size = extract_color_and_size(variant_name)
+        
+        # Получаем код родителя
+        parent_code = get_parent_code_from_variant(variant)
+        
+        if not parent_code:
+            try:
+                bot.delete_message(message.chat.id, search_msg.message_id)
+            except:
+                pass
+            
+            bot.send_message(
+                message.chat.id,
+                f"❌ **Ошибка**\n\n"
+                f"Не удалось получить код родительского товара для {variant_name}.\n"
+                f"Попробуйте еще раз или обратитесь к администратору.",
+                reply_markup=get_code_input_keyboard(),
+                parse_mode='Markdown'
+            )
+            user_states[user_id] = STATE_GET_CODE
+            user_processing[user_id] = False
+            return
+        
+        # Получаем товарный остаток
+        stock = None
+        try:
+            stock = get_variant_stock(variant_id)
+        except Exception as e:
+            logger.warning(f"Не удалось получить остаток для {variant_id}: {e}")
+        
+        # Инициализируем user_data
+        if user_id not in user_data:
+            user_data[user_id] = {}
+        
+        # Добавляем код в историю
+        if 'history' not in user_data[user_id]:
+            user_data[user_id]['history'] = []
+        if code not in user_data[user_id]['history']:
+            user_data[user_id]['history'].append(code)
+            user_data[user_id]['history'] = user_data[user_id]['history'][-5:]
+        
+        # Сохраняем данные
+        user_data[user_id].update({
+            'variant_id': variant_id,
+            'variant_code': code,
+            'variant_name': variant_name,
+            'color': color,
+            'parent_code': parent_code,
+            'upload_type': 'video',
+            'uploaded_count': 0
+        })
+        user_states[user_id] = STATE_GET_VIDEO
+        
+        # Удаляем сообщение о поиске
+        try:
+            bot.delete_message(message.chat.id, search_msg.message_id)
+        except:
+            pass
+        
+        # Формируем сообщение
+        color_info = f"🎨 Цвет: **{color if color else 'Без цвета'}**\n" if color else ""
+        stock_info = f"📦 Товарный остаток: **{stock} шт.**\n\n" if stock is not None and stock > 0 else ""
+        
+        bot.send_message(
+            message.chat.id,
+            f"✅ **Найдено:** {variant_name}\n\n"
+            f"{color_info}"
+            f"{stock_info}"
+            f"🎥 **Теперь отправьте видео**\n\n"
+            f"Видео будет загружено в папку: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n\n"
+            f"Когда закончите - нажмите **✅ Завершить**",
+            reply_markup=get_video_upload_keyboard(),
+            parse_mode='Markdown'
+        )
+        
+        user_processing[user_id] = False
+        logger.info(f"Пользователь {message.from_user.username} нашел товар для видео: {variant_name} (код: {code}, цвет: {color})")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке кода {code} для видео: {e}", exc_info=True)
+        
+        try:
+            bot.delete_message(message.chat.id, search_msg.message_id)
+        except:
+            pass
+        
+        error_msg = f"❌ **Ошибка при поиске**\n\n"
+        error_msg += f"Код: `{code}`\n"
+        error_msg += f"Ошибка: `{str(e)}`\n\n"
+        error_msg += f"Попробуйте еще раз или обратитесь к администратору"
+        
+        bot.send_message(
+            message.chat.id, 
+            error_msg,
+            reply_markup=get_code_input_keyboard(),
+            parse_mode='Markdown'
+        )
+        user_states[user_id] = STATE_GET_CODE
+        user_processing[user_id] = False
+
+@bot.message_handler(content_types=['video', 'document'])
+def handle_video(message):
+    """Обработка видео (включая документы с видео)"""
+    user_id = message.from_user.id
+    state = user_states.get(user_id, STATE_MAIN_MENU)
+    
+    # Проверяем, что это действительно видео
+    is_video = False
+    if message.content_type == 'video':
+        is_video = True
+    elif message.content_type == 'document':
+        # Проверяем MIME тип документа
+        if message.document.mime_type and message.document.mime_type.startswith('video/'):
+            is_video = True
+    
+    # Видео принимаем ТОЛЬКО в состоянии загрузки видео
+    if state == STATE_GET_VIDEO and is_video:
+        process_video(message)
+    elif state == STATE_GET_VIDEO and not is_video:
+        # Если прислан документ, но не видео
+        bot.send_message(
+            message.chat.id,
+            "❌ Отправьте видео файл, а не документ другого типа.",
+            reply_markup=get_video_upload_keyboard()
+        )
+    else:
+        # Если пользователь прислал видео не в том состоянии
+        bot.send_message(
+            message.chat.id, 
+            "🎥 Сначала выберите товар!\n\nНажмите кнопку ниже:",
+            reply_markup=get_main_menu_keyboard()
+        )
+
+def process_video(message):
+    """Обработка загруженного видео - добавление в очередь"""
+    user_id = message.from_user.id
+    
+    data = user_data.get(user_id, {})
+    
+    if not data or 'variant_id' not in data or data.get('upload_type') != 'video':
+        bot.send_message(
+            message.chat.id, 
+            "❌ Данные потеряны. Начните заново:",
+            reply_markup=get_main_menu_keyboard()
+        )
+        user_states[user_id] = STATE_MAIN_MENU
+        return
+    
+    # Инициализируем очередь если её нет
+    if user_id not in user_video_queue:
+        user_video_queue[user_id] = []
+    
+    # Добавляем видео в очередь
+    user_video_queue[user_id].append(message)
+    queue_size = len(user_video_queue[user_id])
+    
+    logger.info(f"Видео добавлено в очередь пользователя {user_id}. Размер очереди: {queue_size}")
+    
+    # Отправляем подтверждение
+    bot.send_message(
+        message.chat.id,
+        f"📥 Видео принято! В очереди: {queue_size}",
+        parse_mode='Markdown'
+    )
+    
+    # Запускаем обработку очереди если она еще не запущена
+    if not user_video_processing.get(user_id, False):
+        user_video_processing[user_id] = True
+        # Запускаем обработку в отдельном потоке
+        thread = threading.Thread(target=process_video_queue, args=(user_id,))
+        thread.daemon = True
+        thread.start()
+
+def process_video_queue(user_id):
+    """Обработка очереди видео пользователя"""
+    try:
+        while user_id in user_video_queue and len(user_video_queue[user_id]) > 0:
+            # Берем первое видео из очереди
+            message = user_video_queue[user_id].pop(0)
+            remaining = len(user_video_queue[user_id])
+            
+            data = user_data.get(user_id, {})
+            if not data or 'variant_id' not in data or data.get('upload_type') != 'video':
+                bot.send_message(
+                    message.chat.id,
+                    "❌ Данные потеряны. Начните заново:",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                user_states[user_id] = STATE_MAIN_MENU
+                break
+            
+            variant_code = data['variant_code']
+            variant_name = data['variant_name']
+            color = data.get('color')
+            parent_code = data.get('parent_code')
+            
+            if not parent_code:
+                bot.send_message(
+                    message.chat.id,
+                    "❌ Ошибка: не найден код родителя. Начните заново:",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                user_states[user_id] = STATE_MAIN_MENU
+                break
+            
+            try:
+                # Получаем файл видео
+                if message.content_type == 'video':
+                    file_id = message.video.file_id
+                    file_info = bot.get_file(file_id)
+                    # Используем оригинальное имя или генерируем
+                    if message.video.file_name:
+                        filename = message.video.file_name
+                    else:
+                        filename = f"video_{variant_code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                elif message.content_type == 'document':
+                    file_id = message.document.file_id
+                    file_info = bot.get_file(file_id)
+                    filename = message.document.file_name or f"video_{variant_code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                else:
+                    bot.send_message(
+                        message.chat.id,
+                        "❌ Неподдерживаемый тип файла. Отправьте видео.",
+                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                    )
+                    continue
+                
+                # Скачиваем файл
+                video_bytes = bot.download_file(file_info.file_path)
+                
+                # Показываем прогресс
+                progress_msg = f"⏳ Загружаю '{filename}' в Google Drive..."
+                if remaining > 0:
+                    progress_msg += f"\n📋 Осталось в очереди: {remaining}"
+                
+                bot.send_message(message.chat.id, progress_msg)
+                
+                # Получаем Drive API
+                drive_api = get_drive_api()
+                if not drive_api:
+                    bot.send_message(
+                        message.chat.id,
+                        "❌ Ошибка: Google Drive API недоступен. Обратитесь к администратору.",
+                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                    )
+                    continue
+                
+                # Создаем структуру папок
+                video_folder_id = ensure_video_folder_structure(parent_code, color, drive_api)
+                if not video_folder_id:
+                    bot.send_message(
+                        message.chat.id,
+                        f"❌ Ошибка создания папок в Google Drive.\n"
+                        f"Проверьте логи или обратитесь к администратору.",
+                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                    )
+                    continue
+                
+                # Загружаем в Google Drive
+                success = upload_video_to_drive(video_bytes, filename, video_folder_id, drive_api)
+                
+                if success:
+                    # Увеличиваем счетчик
+                    user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
+                    uploaded = user_data[user_id]['uploaded_count']
+                    
+                    result_msg = f"✅ Видео '{filename}' загружено в Google Drive!\n\n"
+                    result_msg += f"📁 Путь: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n"
+                    result_msg += f"🎥 Загружено видео: {uploaded}"
+                    
+                    if remaining > 0:
+                        result_msg += f"\n⏳ Обрабатываю следующее ({remaining} в очереди)..."
+                    else:
+                        result_msg += f"\n\nМожете загрузить еще или нажмите '✅ Завершить'"
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        result_msg,
+                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None,
+                        parse_mode='Markdown'
+                    )
+                else:
+                    bot.send_message(
+                        message.chat.id,
+                        f"❌ Ошибка при загрузке '{filename}' в Google Drive\n"
+                        f"{'⏳ Обрабатываю следующее...' if remaining > 0 else 'Попробуйте другое видео'}",
+                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                    )
+                
+                # Небольшая пауза между загрузками
+                if remaining > 0:
+                    time.sleep(0.5)
+            
+            except Exception as e:
+                logger.error(f"Ошибка при обработке видео из очереди: {e}", exc_info=True)
+                bot.send_message(
+                    message.chat.id,
+                    f"❌ Ошибка: {e}\n"
+                    f"{'⏳ Обрабатываю следующее...' if remaining > 0 else 'Попробуйте другое видео'}",
+                    reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                )
+        
+        # Очередь обработана
+        logger.info(f"Очередь видео пользователя {user_id} обработана полностью")
+        
+    finally:
+        # Снимаем флаг обработки
+        user_video_processing[user_id] = False
+        # Очищаем пустую очередь
+        if user_id in user_video_queue and len(user_video_queue[user_id]) == 0:
+            del user_video_queue[user_id]
 
 # =========================
 # CALLBACK HANDLERS
