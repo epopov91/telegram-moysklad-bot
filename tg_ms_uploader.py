@@ -64,7 +64,14 @@ BOT_START_TIME = datetime.now()
 BACKUP_PHOTOS = False  # Опция сохранения фото на диск
 
 # Инициализация бота
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+# Пробуем использовать локальный Bot API сервер для больших файлов
+BOT_API_SERVER = os.getenv('BOT_API_SERVER', None)  # Например: http://localhost:8081
+if BOT_API_SERVER:
+    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, api_server_url=BOT_API_SERVER)
+    logger.info(f"Используется локальный Bot API сервер: {BOT_API_SERVER}")
+else:
+    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+    logger.info("Используется стандартный Telegram Bot API")
 
 # Состояния пользователей
 user_states = {}
