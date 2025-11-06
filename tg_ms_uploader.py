@@ -2171,18 +2171,81 @@ def process_video_queue(user_id):
             
             try:
                 # Получаем файл видео
+                video_bytes = None
+                filename = None
+                
                 if message.content_type == 'video':
                     file_id = message.video.file_id
-                    file_info = bot.get_file(file_id)
                     # Используем оригинальное имя или генерируем
                     if message.video.file_name:
                         filename = message.video.file_name
                     else:
                         filename = f"video_{variant_code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                    
+                    # Пробуем получить file_info, но если файл слишком большой, используем прямую ссылку
+                    try:
+                        file_info = bot.get_file(file_id)
+                        if file_info.file_path:
+                            # Пробуем скачать через стандартный метод
+                            try:
+                                video_bytes = bot.download_file(file_info.file_path)
+                            except Exception as e:
+                                if "too big" in str(e).lower() or "400" in str(e) or "file is too big" in str(e).lower():
+                                    logger.info(f"Файл слишком большой для bot.download_file, используем прямую ссылку")
+                                    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
+                                    response = requests.get(file_url, stream=True, timeout=300)
+                                    response.raise_for_status()
+                                    video_bytes = response.content
+                                else:
+                                    raise
+                        else:
+                            raise Exception("file_path не доступен")
+                    except Exception as e:
+                        if "too big" in str(e).lower() or "400" in str(e) or "file is too big" in str(e).lower():
+                            logger.warning(f"Не удалось получить file_info для большого файла: {e}")
+                            bot.send_message(
+                                message.chat.id,
+                                "❌ Ошибка: Файл слишком большой для обработки через Telegram Bot API.\n"
+                                "Попробуйте отправить видео меньшего размера или используйте другой способ загрузки.",
+                                reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                            )
+                            continue
+                        else:
+                            raise
+                            
                 elif message.content_type == 'document':
                     file_id = message.document.file_id
-                    file_info = bot.get_file(file_id)
                     filename = message.document.file_name or f"video_{variant_code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                    
+                    # Аналогично для document
+                    try:
+                        file_info = bot.get_file(file_id)
+                        if file_info.file_path:
+                            try:
+                                video_bytes = bot.download_file(file_info.file_path)
+                            except Exception as e:
+                                if "too big" in str(e).lower() or "400" in str(e) or "file is too big" in str(e).lower():
+                                    logger.info(f"Файл слишком большой для bot.download_file, используем прямую ссылку")
+                                    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
+                                    response = requests.get(file_url, stream=True, timeout=300)
+                                    response.raise_for_status()
+                                    video_bytes = response.content
+                                else:
+                                    raise
+                        else:
+                            raise Exception("file_path не доступен")
+                    except Exception as e:
+                        if "too big" in str(e).lower() or "400" in str(e) or "file is too big" in str(e).lower():
+                            logger.warning(f"Не удалось получить file_info для большого файла: {e}")
+                            bot.send_message(
+                                message.chat.id,
+                                "❌ Ошибка: Файл слишком большой для обработки через Telegram Bot API.\n"
+                                "Попробуйте отправить видео меньшего размера или используйте другой способ загрузки.",
+                                reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                            )
+                            continue
+                        else:
+                            raise
                 else:
                     bot.send_message(
                         message.chat.id,
@@ -2191,8 +2254,8 @@ def process_video_queue(user_id):
                     )
                     continue
                 
-                # Скачиваем файл
-                video_bytes = bot.download_file(file_info.file_path)
+                if not video_bytes:
+                    raise Exception("Не удалось скачать видео")
                 
                 # Показываем прогресс
                 progress_msg = f"⏳ Загружаю '{filename}' в Google Drive..."
