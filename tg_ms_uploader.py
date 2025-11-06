@@ -2208,14 +2208,33 @@ def process_video_queue(user_id):
                                 else:
                                     raise Exception(f"Telegram API вернул ошибку: {api_data}")
                             except Exception as api_e:
-                                logger.error(f"Ошибка при получении file_path через прямой API: {api_e}")
-                                bot.send_message(
-                                    message.chat.id,
-                                    f"❌ Ошибка получения информации о файле: {api_e}\n"
-                                    "Попробуйте отправить видео еще раз.",
-                                    reply_markup=get_video_upload_keyboard() if remaining == 0 else None
-                                )
-                                continue
+                                error_str = str(api_e).lower()
+                                # Если файл слишком большой, Telegram не предоставляет file_path
+                                if "400" in error_str or "bad request" in error_str or "too big" in error_str:
+                                    logger.warning(f"Файл слишком большой для получения file_path через Telegram API (размер: {file_size} bytes)")
+                                    # Для файлов больше 20 МБ Telegram не предоставляет file_path
+                                    size_mb = file_size // (1024*1024) if file_size else "неизвестно"
+                                    bot.send_message(
+                                        message.chat.id,
+                                        f"❌ Ошибка: Файл слишком большой ({size_mb} МБ).\n\n"
+                                        "Telegram Bot API не позволяет получить доступ к файлам больше 20 МБ.\n\n"
+                                        "**Решения:**\n"
+                                        "1. Сожмите видео до размера меньше 20 МБ\n"
+                                        "2. Отправьте видео через ссылку (если есть)\n"
+                                        "3. Используйте другой способ загрузки",
+                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None,
+                                        parse_mode='Markdown'
+                                    )
+                                    continue
+                                else:
+                                    logger.error(f"Ошибка при получении file_path через прямой API: {api_e}")
+                                    bot.send_message(
+                                        message.chat.id,
+                                        f"❌ Ошибка получения информации о файле: {api_e}\n"
+                                        "Попробуйте отправить видео еще раз.",
+                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                                    )
+                                    continue
                         else:
                             raise
                     
@@ -2278,14 +2297,33 @@ def process_video_queue(user_id):
                                 else:
                                     raise Exception(f"Telegram API вернул ошибку: {api_data}")
                             except Exception as api_e:
-                                logger.error(f"Ошибка при получении file_path через прямой API: {api_e}")
-                                bot.send_message(
-                                    message.chat.id,
-                                    f"❌ Ошибка получения информации о файле: {api_e}\n"
-                                    "Попробуйте отправить видео еще раз.",
-                                    reply_markup=get_video_upload_keyboard() if remaining == 0 else None
-                                )
-                                continue
+                                error_str = str(api_e).lower()
+                                # Если файл слишком большой, Telegram не предоставляет file_path
+                                if "400" in error_str or "bad request" in error_str or "too big" in error_str:
+                                    logger.warning(f"Файл слишком большой для получения file_path через Telegram API (размер: {file_size} bytes)")
+                                    # Для файлов больше 20 МБ Telegram не предоставляет file_path
+                                    size_mb = file_size // (1024*1024) if file_size else "неизвестно"
+                                    bot.send_message(
+                                        message.chat.id,
+                                        f"❌ Ошибка: Файл слишком большой ({size_mb} МБ).\n\n"
+                                        "Telegram Bot API не позволяет получить доступ к файлам больше 20 МБ.\n\n"
+                                        "**Решения:**\n"
+                                        "1. Сожмите видео до размера меньше 20 МБ\n"
+                                        "2. Отправьте видео через ссылку (если есть)\n"
+                                        "3. Используйте другой способ загрузки",
+                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None,
+                                        parse_mode='Markdown'
+                                    )
+                                    continue
+                                else:
+                                    logger.error(f"Ошибка при получении file_path через прямой API: {api_e}")
+                                    bot.send_message(
+                                        message.chat.id,
+                                        f"❌ Ошибка получения информации о файле: {api_e}\n"
+                                        "Попробуйте отправить видео еще раз.",
+                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
+                                    )
+                                    continue
                         else:
                             raise
                     
