@@ -940,8 +940,32 @@ def cmd_update(message):
     """Обновление бота из Git"""
     try:
         bot.send_message(message.chat.id, "🔄 Обновление кода из GitHub...")
+        
+        # Проверяем наличие git перед использованием
+        try:
+            subprocess.run(['git', '--version'], capture_output=True, text=True, timeout=5, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            error_msg = (
+                "❌ **Git не установлен!**\n\n"
+                "Для обновления через бота необходимо установить git:\n"
+                "```bash\n"
+                "sudo apt-get update\n"
+                "sudo apt-get install git -y\n"
+                "```\n\n"
+                "Или обновите вручную на сервере:\n"
+                "```bash\n"
+                "cd /path/to/bot\n"
+                "git pull\n"
+                "sudo systemctl restart telegram-bot\n"
+                "```"
+            )
+            bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
+            logger.error("Git не установлен на сервере")
+            return
+        
+        # Выполняем git pull
         result = subprocess.run(['git', 'pull'], capture_output=True, text=True, 
-                              cwd=os.path.dirname(os.path.abspath(__file__)))
+                              cwd=os.path.dirname(os.path.abspath(__file__)), timeout=30)
         
         if result.returncode == 0:
             bot.send_message(
@@ -956,26 +980,15 @@ def cmd_update(message):
             # Перезапуск (правильная команда для Windows и Unix)
             os.execv(sys.executable, [sys.executable] + sys.argv)
         else:
-            bot.send_message(message.chat.id, f"❌ Ошибка:\n```\n{result.stderr}\n```", parse_mode='Markdown')
-    except FileNotFoundError:
-        error_msg = (
-            "❌ **Git не установлен!**\n\n"
-            "Для обновления через бота необходимо установить git:\n"
-            "```bash\n"
-            "sudo apt-get update\n"
-            "sudo apt-get install git\n"
-            "```\n\n"
-            "Или обновите вручную на сервере:\n"
-            "```bash\n"
-            "cd /path/to/bot\n"
-            "git pull\n"
-            "sudo systemctl restart telegram-bot\n"
-            "```"
-        )
-        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-        logger.error("Git не установлен на сервере")
+            error_output = result.stderr if result.stderr else result.stdout
+            bot.send_message(message.chat.id, f"❌ Ошибка при обновлении:\n```\n{error_output}\n```", parse_mode='Markdown')
+            logger.error(f"Ошибка git pull: {error_output}")
+    except subprocess.TimeoutExpired:
+        bot.send_message(message.chat.id, "❌ Таймаут при обновлении. Попробуйте позже или обновите вручную на сервере.")
+        logger.error("Таймаут при выполнении git pull")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        error_msg = f"❌ Ошибка: {str(e)}"
+        bot.send_message(message.chat.id, error_msg)
         logger.error(f"Ошибка при обновлении: {e}", exc_info=True)
 
 @bot.message_handler(commands=['restart'])
@@ -1027,24 +1040,45 @@ def cmd_fix(message):
     try:
         bot.send_message(message.chat.id, "🔧 **Автоматическое исправление...**\n\n1️⃣ Обновление кода из GitHub...")
         
-        # Шаг 1: Git pull
+        # Шаг 1: Проверяем наличие git и выполняем git pull
         try:
-            result = subprocess.run(['git', 'pull'], capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)))
-            
-            if result.returncode != 0:
-                bot.send_message(message.chat.id, f"❌ Ошибка при обновлении:\n```\n{result.stderr}\n```", parse_mode='Markdown')
-                return
-        except FileNotFoundError:
+            # Проверяем наличие git
+            subprocess.run(['git', '--version'], capture_output=True, text=True, timeout=5, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
             error_msg = (
                 "❌ **Git не установлен!**\n\n"
                 "Установите git на сервере:\n"
                 "```bash\n"
-                "sudo apt-get update && sudo apt-get install git\n"
+                "sudo apt-get update && sudo apt-get install git -y\n"
                 "```\n\n"
-                "Или обновите вручную и перезапустите бота."
+                "Или обновите вручную и перезапустите бота:\n"
+                "```bash\n"
+                "cd /path/to/bot\n"
+                "git pull\n"
+                "sudo systemctl restart telegram-bot\n"
+                "```"
             )
             bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
             logger.error("Git не установлен на сервере")
+            return
+        
+        # Выполняем git pull
+        try:
+            result = subprocess.run(['git', 'pull'], capture_output=True, text=True, 
+                                  cwd=os.path.dirname(os.path.abspath(__file__)), timeout=30)
+            
+            if result.returncode != 0:
+                error_output = result.stderr if result.stderr else result.stdout
+                bot.send_message(message.chat.id, f"❌ Ошибка при обновлении:\n```\n{error_output}\n```", parse_mode='Markdown')
+                logger.error(f"Ошибка git pull: {error_output}")
+                return
+        except subprocess.TimeoutExpired:
+            bot.send_message(message.chat.id, "❌ Таймаут при обновлении. Попробуйте позже или обновите вручную.")
+            logger.error("Таймаут при выполнении git pull")
+            return
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка при обновлении: {str(e)}")
+            logger.error(f"Ошибка при git pull: {e}", exc_info=True)
             return
         
         bot.send_message(message.chat.id, f"✅ Код обновлен:\n```\n{result.stdout}\n```\n\n2️⃣ Проверка зависимостей...", parse_mode='Markdown')
@@ -2451,10 +2485,24 @@ def check_and_update(send_notification=False):
             return
         
         # Делаем git fetch
-        subprocess.run(['git', 'fetch'], capture_output=True, text=True, timeout=10)
+        try:
+            subprocess.run(['git', 'fetch'], capture_output=True, text=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            logger.warning("⏱ Таймаут при git fetch, пропускаю проверку обновлений")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при git fetch: {e}, пропускаю проверку обновлений")
+            return
         
         # Проверяем есть ли новые коммиты
-        result = subprocess.run(['git', 'status', '-uno'], capture_output=True, text=True, timeout=5)
+        try:
+            result = subprocess.run(['git', 'status', '-uno'], capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.warning("⏱ Таймаут при git status, пропускаю проверку обновлений")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при git status: {e}, пропускаю проверку обновлений")
+            return
         
         if 'Your branch is behind' in result.stdout or 'behind' in result.stdout:
             logger.info("📥 Найдены обновления! Устанавливаю...")
@@ -2472,30 +2520,34 @@ def check_and_update(send_notification=False):
                     pass
             
             # Делаем git pull
-            pull_result = subprocess.run(['git', 'pull'], capture_output=True, text=True, timeout=15)
-            
-            if pull_result.returncode == 0:
-                logger.info(f"✅ Код обновлен успешно!")
-                logger.info("🔄 Перезапуск бота с новой версией...")
+            try:
+                pull_result = subprocess.run(['git', 'pull'], capture_output=True, text=True, timeout=15)
                 
-                # Перезапуск с новой версией
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
-                logger.error(f"❌ Ошибка при обновлении: {pull_result.stderr}")
-                if send_notification and ADMIN_USER_ID:
-                    try:
-                        bot.send_message(
-                            ADMIN_USER_ID,
-                            f"❌ Ошибка при обновлении:\n```\n{pull_result.stderr}\n```",
-                            parse_mode='Markdown'
-                        )
-                    except:
-                        pass
+                if pull_result.returncode == 0:
+                    logger.info(f"✅ Код обновлен успешно!")
+                    logger.info("🔄 Перезапуск бота с новой версией...")
+                    
+                    # Перезапуск с новой версией
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                else:
+                    error_output = pull_result.stderr if pull_result.stderr else pull_result.stdout
+                    logger.error(f"❌ Ошибка при обновлении: {error_output}")
+                    if send_notification and ADMIN_USER_ID:
+                        try:
+                            bot.send_message(
+                                ADMIN_USER_ID,
+                                f"❌ Ошибка при обновлении:\n```\n{error_output}\n```",
+                                parse_mode='Markdown'
+                            )
+                        except:
+                            pass
+            except subprocess.TimeoutExpired:
+                logger.warning("⏱ Таймаут при git pull, продолжаю работу...")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка при git pull: {e}, продолжаю работу...")
         else:
             logger.info("✅ Бот уже использует последнюю версию")
             
-    except subprocess.TimeoutExpired:
-        logger.warning("⏱ Таймаут при проверке обновлений, продолжаю работу...")
     except Exception as e:
         logger.warning(f"⚠️ Не удалось проверить обновления: {e}, продолжаю работу...")
 
