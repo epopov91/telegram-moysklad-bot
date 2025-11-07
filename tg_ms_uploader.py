@@ -2013,12 +2013,13 @@ def handle_code_input_text_for_video(message, code):
             user_data[user_id]['history'] = user_data[user_id]['history'][-5:]
         
         # Сохраняем данные
+        # Для видео используем код самого варианта, а не код родителя
         user_data[user_id].update({
             'variant_id': variant_id,
             'variant_code': code,
             'variant_name': variant_name,
             'color': color,
-            'parent_code': parent_code,
+            'parent_code': code,  # Для видео используем код варианта, а не код родителя
             'upload_type': 'video',
             'uploaded_count': 0
         })
