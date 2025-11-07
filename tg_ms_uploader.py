@@ -2395,42 +2395,71 @@ def process_video_queue(user_id):
                     
                     # Скачиваем файл (для больших файлов используем локальный сервер или прямую ссылку)
                     try:
-                        # Определяем URL для скачивания
-                        if BOT_API_SERVER and file_size and file_size > 20 * 1024 * 1024:
-                            # Для больших файлов используем локальный сервер
-                            file_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                        video_bytes = None
+                        # Проверяем, есть ли сохраненный путь от локального сервера
+                        local_file_path = user_data.get(message.chat.id, {}).get('local_file_path')
+                        
+                        if BOT_API_SERVER and local_file_path and file_size and file_size > 20 * 1024 * 1024:
+                            # Для больших файлов с локального сервера читаем из Docker контейнера
+                            logger.info(f"Чтение большого файла из Docker контейнера: {local_file_path}")
+                            try:
+                                # Используем docker exec для чтения файла из контейнера
+                                import subprocess
+                                result = subprocess.run(
+                                    ['docker', 'exec', 'telegram-bot-api', 'cat', local_file_path],
+                                    capture_output=True,
+                                    timeout=300
+                                )
+                                if result.returncode == 0:
+                                    video_bytes = result.stdout
+                                    logger.info(f"✅ Файл прочитан из контейнера ({len(video_bytes)} bytes)")
+                                else:
+                                    raise Exception(f"Docker exec вернул код {result.returncode}: {result.stderr.decode()}")
+                            except FileNotFoundError:
+                                logger.warning("Docker не найден, пробуем через HTTP")
+                                # Пробуем через HTTP endpoint
+                                file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                response = requests.get(file_url, stream=True, timeout=600)
+                                response.raise_for_status()
+                                video_bytes = response.content
+                                logger.info(f"✅ Файл скачан через HTTP ({len(video_bytes)} bytes)")
+                        elif BOT_API_SERVER and file_size and file_size > 20 * 1024 * 1024:
+                            # Для больших файлов используем локальный сервер через HTTP
+                            file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                             logger.info(f"Скачивание большого файла через локальный сервер: {file_url}")
+                            response = requests.get(file_url, stream=True, timeout=600)
+                            response.raise_for_status()
+                            video_bytes = response.content
+                            logger.info(f"✅ Файл скачан через локальный сервер ({len(video_bytes)} bytes)")
                         elif file_size and file_size > 20 * 1024 * 1024:
                             # Если локальный сервер не настроен, используем стандартный (может не сработать)
                             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                             logger.info(f"Скачивание большого файла через стандартный API: {file_url}")
+                            response = requests.get(file_url, stream=True, timeout=600)
+                            response.raise_for_status()
+                            video_bytes = response.content
+                            logger.info(f"✅ Файл скачан через стандартный API ({len(video_bytes)} bytes)")
                         else:
                             # Для маленьких файлов пробуем стандартный способ
                             try:
                                 video_bytes = bot.download_file(file_path)
-                                logger.info(f"Файл скачан через bot.download_file")
+                                logger.info(f"Файл скачан через bot.download_file ({len(video_bytes)} bytes)")
                             except Exception as e:
                                 if "too big" in str(e).lower() or "400" in str(e):
                                     logger.info(f"bot.download_file не сработал, используем прямую ссылку")
                                     if BOT_API_SERVER:
-                                        file_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                        file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                                     else:
                                         file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                                     response = requests.get(file_url, stream=True, timeout=600)
                                     response.raise_for_status()
                                     video_bytes = response.content
+                                    logger.info(f"✅ Файл скачан через прямую ссылку ({len(video_bytes)} bytes)")
                                 else:
                                     raise
-                            if video_bytes:
-                                # Файл уже скачан через bot.download_file
-                                pass
                         
-                        # Если файл еще не скачан, скачиваем через прямую ссылку
                         if not video_bytes:
-                            response = requests.get(file_url, stream=True, timeout=600)
-                            response.raise_for_status()
-                            video_bytes = response.content
-                            logger.info(f"✅ Файл скачан ({len(video_bytes)} bytes)")
+                            raise Exception("Не удалось скачать файл")
                     except Exception as e:
                         logger.error(f"Ошибка скачивания файла: {e}")
                         raise
