@@ -1303,6 +1303,11 @@ def handle_text(message):
             cmd_logs(message)
         elif text == "⚠️ Ошибки":
             cmd_errors(message)
+        elif text == BTN_HELP:
+            logger.info(f"[HANDLER: handle_text] -> BTN_HELP (в управлении)")
+            cmd_help(message)
+        elif text == BTN_BACK:
+            show_main_menu(message)
         else:
             bot.send_message(
                 message.chat.id,
