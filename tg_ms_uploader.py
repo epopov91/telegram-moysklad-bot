@@ -2589,7 +2589,7 @@ def process_video_queue(user_id):
                     uploaded = user_data[user_id]['uploaded_count']
                     
                     result_msg = f"✅ Видео '{filename}' загружено в Google Drive!\n\n"
-                    result_msg += f"📁 Путь: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n"
+                    result_msg += f"📁 Путь: `{variant_code}/{color if color else 'Без цвета'}/Видео/`\n"
                     result_msg += f"🎥 Загружено видео: {uploaded}"
                     
                     if remaining > 0:
