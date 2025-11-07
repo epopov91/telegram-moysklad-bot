@@ -115,7 +115,7 @@ def get_main_menu_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(BTN_UPLOAD, BTN_UPLOAD_VIDEO)
     keyboard.row(BTN_STATS, BTN_NO_PHOTO)
-    keyboard.row(BTN_MANAGE, BTN_HELP)
+    keyboard.row(BTN_MANAGE)
     return keyboard
 
 def get_code_input_keyboard():
@@ -150,6 +150,7 @@ def get_management_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row("🔄 Перезапуск", "🔧 Исправить")
     keyboard.row("📋 Логи", "⚠️ Ошибки")
+    keyboard.row(BTN_HELP)
     keyboard.row(BTN_BACK)
     return keyboard
 
@@ -1241,9 +1242,6 @@ def handle_text(message):
         elif text == BTN_MANAGE:
             logger.info(f"[HANDLER: handle_text] -> BTN_MANAGE")
             show_management(message)
-        elif text == BTN_HELP:
-            logger.info(f"[HANDLER: handle_text] -> BTN_HELP")
-            cmd_help(message)
         else:
             # Любой другой текст - показываем подсказку
             logger.warning(f"[HANDLER: handle_text] -> UNKNOWN TEXT in MAIN_MENU: '{text}'")
