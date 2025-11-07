@@ -16,7 +16,6 @@ from typing import Optional, Tuple
 from dotenv import load_dotenv
 import telebot
 from telebot import types
-from telebot import apihelper
 
 # Загрузка переменных окружения из .env файла
 load_dotenv()
@@ -65,17 +64,12 @@ BOT_START_TIME = datetime.now()
 BACKUP_PHOTOS = False  # Опция сохранения фото на диск
 
 # Инициализация бота
-# Пробуем использовать локальный Bot API сервер для больших файлов
+# Локальный Bot API сервер используется только для больших файлов (>20 МБ)
 BOT_API_SERVER = os.getenv('BOT_API_SERVER', None)  # Например: http://localhost:8081
 if BOT_API_SERVER:
-    # Настраиваем кастомный сервер через apihelper
-    api_url = BOT_API_SERVER.rstrip('/')
-    if not api_url.endswith('/bot'):
-        api_url = f"{api_url}/bot"
-    apihelper.API_URL = api_url
-    logger.info(f"Используется локальный Bot API сервер: {api_url}")
+    logger.info(f"Локальный Bot API сервер настроен: {BOT_API_SERVER} (будет использоваться для больших файлов)")
 else:
-    logger.info("Используется стандартный Telegram Bot API")
+    logger.info("Используется стандартный Telegram Bot API (файлы >20 МБ не поддерживаются)")
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
