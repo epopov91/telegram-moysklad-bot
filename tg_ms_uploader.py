@@ -2280,8 +2280,10 @@ def process_video_queue(user_id):
                             try:
                                 # Используем docker exec для чтения файла из контейнера
                                 import subprocess
+                                # Используем полный путь к docker
+                                docker_path = '/usr/bin/docker'
                                 result = subprocess.run(
-                                    ['docker', 'exec', 'telegram-bot-api', 'cat', local_file_path],
+                                    [docker_path, 'exec', 'telegram-bot-api', 'cat', local_file_path],
                                     capture_output=True,
                                     timeout=300
                                 )
@@ -2289,15 +2291,35 @@ def process_video_queue(user_id):
                                     video_bytes = result.stdout
                                     logger.info(f"✅ Файл прочитан из контейнера ({len(video_bytes)} bytes)")
                                 else:
-                                    raise Exception(f"Docker exec вернул код {result.returncode}: {result.stderr.decode()}")
+                                    error_msg = result.stderr.decode() if result.stderr else "Unknown error"
+                                    raise Exception(f"Docker exec вернул код {result.returncode}: {error_msg}")
                             except FileNotFoundError:
-                                logger.warning("Docker не найден, пробуем через HTTP")
-                                # Пробуем через HTTP endpoint
-                                file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-                                response = requests.get(file_url, stream=True, timeout=600)
-                                response.raise_for_status()
-                                video_bytes = response.content
-                                logger.info(f"✅ Файл скачан через HTTP ({len(video_bytes)} bytes)")
+                                logger.warning("Docker не найден по пути /usr/bin/docker, пробуем найти в PATH")
+                                try:
+                                    # Пробуем найти docker в PATH
+                                    result = subprocess.run(
+                                        ['which', 'docker'],
+                                        capture_output=True,
+                                        timeout=5
+                                    )
+                                    if result.returncode == 0:
+                                        docker_path = result.stdout.decode().strip()
+                                        logger.info(f"Найден docker по пути: {docker_path}")
+                                        result = subprocess.run(
+                                            [docker_path, 'exec', 'telegram-bot-api', 'cat', local_file_path],
+                                            capture_output=True,
+                                            timeout=300
+                                        )
+                                        if result.returncode == 0:
+                                            video_bytes = result.stdout
+                                            logger.info(f"✅ Файл прочитан из контейнера ({len(video_bytes)} bytes)")
+                                        else:
+                                            raise Exception(f"Docker exec вернул код {result.returncode}")
+                                    else:
+                                        raise FileNotFoundError("Docker не найден")
+                                except Exception as e2:
+                                    logger.error(f"Не удалось использовать docker: {e2}")
+                                    raise Exception(f"Не удалось прочитать файл из контейнера: {e2}")
                         elif BOT_API_SERVER and file_size and file_size > 20 * 1024 * 1024:
                             # Для больших файлов используем локальный сервер через HTTP
                             file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
@@ -2434,8 +2456,10 @@ def process_video_queue(user_id):
                             try:
                                 # Используем docker exec для чтения файла из контейнера
                                 import subprocess
+                                # Используем полный путь к docker
+                                docker_path = '/usr/bin/docker'
                                 result = subprocess.run(
-                                    ['docker', 'exec', 'telegram-bot-api', 'cat', local_file_path],
+                                    [docker_path, 'exec', 'telegram-bot-api', 'cat', local_file_path],
                                     capture_output=True,
                                     timeout=300
                                 )
@@ -2443,15 +2467,35 @@ def process_video_queue(user_id):
                                     video_bytes = result.stdout
                                     logger.info(f"✅ Файл прочитан из контейнера ({len(video_bytes)} bytes)")
                                 else:
-                                    raise Exception(f"Docker exec вернул код {result.returncode}: {result.stderr.decode()}")
+                                    error_msg = result.stderr.decode() if result.stderr else "Unknown error"
+                                    raise Exception(f"Docker exec вернул код {result.returncode}: {error_msg}")
                             except FileNotFoundError:
-                                logger.warning("Docker не найден, пробуем через HTTP")
-                                # Пробуем через HTTP endpoint
-                                file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-                                response = requests.get(file_url, stream=True, timeout=600)
-                                response.raise_for_status()
-                                video_bytes = response.content
-                                logger.info(f"✅ Файл скачан через HTTP ({len(video_bytes)} bytes)")
+                                logger.warning("Docker не найден по пути /usr/bin/docker, пробуем найти в PATH")
+                                try:
+                                    # Пробуем найти docker в PATH
+                                    result = subprocess.run(
+                                        ['which', 'docker'],
+                                        capture_output=True,
+                                        timeout=5
+                                    )
+                                    if result.returncode == 0:
+                                        docker_path = result.stdout.decode().strip()
+                                        logger.info(f"Найден docker по пути: {docker_path}")
+                                        result = subprocess.run(
+                                            [docker_path, 'exec', 'telegram-bot-api', 'cat', local_file_path],
+                                            capture_output=True,
+                                            timeout=300
+                                        )
+                                        if result.returncode == 0:
+                                            video_bytes = result.stdout
+                                            logger.info(f"✅ Файл прочитан из контейнера ({len(video_bytes)} bytes)")
+                                        else:
+                                            raise Exception(f"Docker exec вернул код {result.returncode}")
+                                    else:
+                                        raise FileNotFoundError("Docker не найден")
+                                except Exception as e2:
+                                    logger.error(f"Не удалось использовать docker: {e2}")
+                                    raise Exception(f"Не удалось прочитать файл из контейнера: {e2}")
                         elif BOT_API_SERVER and file_size and file_size > 20 * 1024 * 1024:
                             # Для больших файлов используем локальный сервер через HTTP
                             file_url = f"{BOT_API_SERVER.rstrip('/')}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
