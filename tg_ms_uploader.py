@@ -2208,39 +2208,47 @@ def process_video_queue(user_id):
                     except Exception as e:
                         error_str = str(e).lower()
                         if "too big" in error_str or "400" in error_str or "file is too big" in error_str:
-                            # Для больших файлов используем прямой запрос к Telegram API
-                            logger.info(f"bot.get_file вернул ошибку для большого файла, используем прямой API запрос")
+                            # Для больших файлов используем локальный Bot API сервер
+                            logger.info(f"bot.get_file вернул ошибку для большого файла, используем локальный Bot API сервер")
                             try:
-                                api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
-                                api_response = requests.get(api_url, timeout=10)
-                                api_response.raise_for_status()
-                                api_data = api_response.json()
-                                if api_data.get('ok') and api_data.get('result'):
-                                    file_path = api_data['result'].get('file_path')
-                                    logger.info(f"Получен file_path через прямой API запрос: {file_path}")
+                                # Используем локальный сервер, если настроен
+                                if BOT_API_SERVER:
+                                    local_api_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+                                    logger.info(f"Запрос к локальному серверу: {local_api_url}")
+                                    api_response = requests.get(local_api_url, timeout=10)
+                                    api_response.raise_for_status()
+                                    api_data = api_response.json()
+                                    if api_data.get('ok') and api_data.get('result'):
+                                        file_path = api_data['result'].get('file_path')
+                                        logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path}")
+                                    else:
+                                        raise Exception(f"Локальный Bot API вернул ошибку: {api_data}")
                                 else:
-                                    raise Exception(f"Telegram API вернул ошибку: {api_data}")
+                                    # Стандартный API (не сработает для больших файлов)
+                                    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+                                    api_response = requests.get(api_url, timeout=10)
+                                    api_response.raise_for_status()
+                                    api_data = api_response.json()
+                                    if api_data.get('ok') and api_data.get('result'):
+                                        file_path = api_data['result'].get('file_path')
+                                        logger.info(f"Получен file_path через стандартный API: {file_path}")
+                                    else:
+                                        raise Exception(f"Telegram API вернул ошибку: {api_data}")
                             except Exception as api_e:
                                 error_str = str(api_e).lower()
-                                # Если файл слишком большой, Telegram не предоставляет file_path
-                                if "400" in error_str or "bad request" in error_str or "too big" in error_str:
-                                    logger.warning(f"Файл слишком большой для получения file_path через Telegram API (размер: {file_size} bytes)")
-                                    # Для файлов больше 20 МБ Telegram не предоставляет file_path
+                                # Если файл слишком большой и локальный сервер не помог
+                                if "400" in error_str or "bad request" in error_str or "too big" in error_str or "404" in error_str:
+                                    logger.warning(f"Не удалось получить file_path для большого файла (размер: {file_size} bytes): {api_e}")
                                     size_mb = file_size // (1024*1024) if file_size else "неизвестно"
                                     bot.send_message(
                                         message.chat.id,
-                                        f"❌ Ошибка: Файл слишком большой ({size_mb} МБ).\n\n"
-                                        "Telegram Bot API не позволяет получить доступ к файлам больше 20 МБ.\n\n"
-                                        "**Решения:**\n"
-                                        "1. Сожмите видео до размера меньше 20 МБ\n"
-                                        "2. Отправьте видео через ссылку (если есть)\n"
-                                        "3. Используйте другой способ загрузки",
-                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None,
-                                        parse_mode='Markdown'
+                                        f"❌ Ошибка: Файл слишком большой ({size_mb} МБ).\n"
+                                        "Обратитесь к администратору для настройки локального Bot API сервера.",
+                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
                                     )
                                     continue
                                 else:
-                                    logger.error(f"Ошибка при получении file_path через прямой API: {api_e}")
+                                    logger.error(f"Ошибка при получении file_path: {api_e}")
                                     bot.send_message(
                                         message.chat.id,
                                         f"❌ Ошибка получения информации о файле: {api_e}\n"
@@ -2254,28 +2262,44 @@ def process_video_queue(user_id):
                     if not file_path:
                         raise Exception("Не удалось получить file_path")
                     
-                    # Скачиваем файл (для больших файлов всегда используем прямую ссылку)
+                    # Скачиваем файл (для больших файлов используем локальный сервер или прямую ссылку)
                     try:
-                        # Для файлов больше 20 МБ используем прямую ссылку
-                        if file_size and file_size > 20 * 1024 * 1024:
-                            logger.info(f"Файл больше 20 МБ ({file_size} bytes), используем прямую ссылку")
+                        # Определяем URL для скачивания
+                        if BOT_API_SERVER and file_size and file_size > 20 * 1024 * 1024:
+                            # Для больших файлов используем локальный сервер
+                            file_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                            logger.info(f"Скачивание большого файла через локальный сервер: {file_url}")
+                        elif file_size and file_size > 20 * 1024 * 1024:
+                            # Если локальный сервер не настроен, используем стандартный (может не сработать)
                             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-                            response = requests.get(file_url, stream=True, timeout=600)
-                            response.raise_for_status()
-                            video_bytes = response.content
+                            logger.info(f"Скачивание большого файла через стандартный API: {file_url}")
                         else:
                             # Для маленьких файлов пробуем стандартный способ
                             try:
                                 video_bytes = bot.download_file(file_path)
+                                logger.info(f"Файл скачан через bot.download_file")
                             except Exception as e:
                                 if "too big" in str(e).lower() or "400" in str(e):
                                     logger.info(f"bot.download_file не сработал, используем прямую ссылку")
-                                    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                    if BOT_API_SERVER:
+                                        file_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                    else:
+                                        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                                     response = requests.get(file_url, stream=True, timeout=600)
                                     response.raise_for_status()
                                     video_bytes = response.content
                                 else:
                                     raise
+                            if video_bytes:
+                                # Файл уже скачан через bot.download_file
+                                pass
+                        
+                        # Если файл еще не скачан, скачиваем через прямую ссылку
+                        if not video_bytes:
+                            response = requests.get(file_url, stream=True, timeout=600)
+                            response.raise_for_status()
+                            video_bytes = response.content
+                            logger.info(f"✅ Файл скачан ({len(video_bytes)} bytes)")
                     except Exception as e:
                         logger.error(f"Ошибка скачивания файла: {e}")
                         raise
@@ -2297,39 +2321,47 @@ def process_video_queue(user_id):
                     except Exception as e:
                         error_str = str(e).lower()
                         if "too big" in error_str or "400" in error_str or "file is too big" in error_str:
-                            # Для больших файлов используем прямой запрос к Telegram API
-                            logger.info(f"bot.get_file вернул ошибку для большого файла, используем прямой API запрос")
+                            # Для больших файлов используем локальный Bot API сервер
+                            logger.info(f"bot.get_file вернул ошибку для большого файла, используем локальный Bot API сервер")
                             try:
-                                api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
-                                api_response = requests.get(api_url, timeout=10)
-                                api_response.raise_for_status()
-                                api_data = api_response.json()
-                                if api_data.get('ok') and api_data.get('result'):
-                                    file_path = api_data['result'].get('file_path')
-                                    logger.info(f"Получен file_path через прямой API запрос: {file_path}")
+                                # Используем локальный сервер, если настроен
+                                if BOT_API_SERVER:
+                                    local_api_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+                                    logger.info(f"Запрос к локальному серверу: {local_api_url}")
+                                    api_response = requests.get(local_api_url, timeout=10)
+                                    api_response.raise_for_status()
+                                    api_data = api_response.json()
+                                    if api_data.get('ok') and api_data.get('result'):
+                                        file_path = api_data['result'].get('file_path')
+                                        logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path}")
+                                    else:
+                                        raise Exception(f"Локальный Bot API вернул ошибку: {api_data}")
                                 else:
-                                    raise Exception(f"Telegram API вернул ошибку: {api_data}")
+                                    # Стандартный API (не сработает для больших файлов)
+                                    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+                                    api_response = requests.get(api_url, timeout=10)
+                                    api_response.raise_for_status()
+                                    api_data = api_response.json()
+                                    if api_data.get('ok') and api_data.get('result'):
+                                        file_path = api_data['result'].get('file_path')
+                                        logger.info(f"Получен file_path через стандартный API: {file_path}")
+                                    else:
+                                        raise Exception(f"Telegram API вернул ошибку: {api_data}")
                             except Exception as api_e:
                                 error_str = str(api_e).lower()
-                                # Если файл слишком большой, Telegram не предоставляет file_path
-                                if "400" in error_str or "bad request" in error_str or "too big" in error_str:
-                                    logger.warning(f"Файл слишком большой для получения file_path через Telegram API (размер: {file_size} bytes)")
-                                    # Для файлов больше 20 МБ Telegram не предоставляет file_path
+                                # Если файл слишком большой и локальный сервер не помог
+                                if "400" in error_str or "bad request" in error_str or "too big" in error_str or "404" in error_str:
+                                    logger.warning(f"Не удалось получить file_path для большого файла (размер: {file_size} bytes): {api_e}")
                                     size_mb = file_size // (1024*1024) if file_size else "неизвестно"
                                     bot.send_message(
                                         message.chat.id,
-                                        f"❌ Ошибка: Файл слишком большой ({size_mb} МБ).\n\n"
-                                        "Telegram Bot API не позволяет получить доступ к файлам больше 20 МБ.\n\n"
-                                        "**Решения:**\n"
-                                        "1. Сожмите видео до размера меньше 20 МБ\n"
-                                        "2. Отправьте видео через ссылку (если есть)\n"
-                                        "3. Используйте другой способ загрузки",
-                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None,
-                                        parse_mode='Markdown'
+                                        f"❌ Ошибка: Файл слишком большой ({size_mb} МБ).\n"
+                                        "Обратитесь к администратору для настройки локального Bot API сервера.",
+                                        reply_markup=get_video_upload_keyboard() if remaining == 0 else None
                                     )
                                     continue
                                 else:
-                                    logger.error(f"Ошибка при получении file_path через прямой API: {api_e}")
+                                    logger.error(f"Ошибка при получении file_path: {api_e}")
                                     bot.send_message(
                                         message.chat.id,
                                         f"❌ Ошибка получения информации о файле: {api_e}\n"
@@ -2343,28 +2375,44 @@ def process_video_queue(user_id):
                     if not file_path:
                         raise Exception("Не удалось получить file_path")
                     
-                    # Скачиваем файл (для больших файлов всегда используем прямую ссылку)
+                    # Скачиваем файл (для больших файлов используем локальный сервер или прямую ссылку)
                     try:
-                        # Для файлов больше 20 МБ используем прямую ссылку
-                        if file_size and file_size > 20 * 1024 * 1024:
-                            logger.info(f"Файл больше 20 МБ ({file_size} bytes), используем прямую ссылку")
+                        # Определяем URL для скачивания
+                        if BOT_API_SERVER and file_size and file_size > 20 * 1024 * 1024:
+                            # Для больших файлов используем локальный сервер
+                            file_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                            logger.info(f"Скачивание большого файла через локальный сервер: {file_url}")
+                        elif file_size and file_size > 20 * 1024 * 1024:
+                            # Если локальный сервер не настроен, используем стандартный (может не сработать)
                             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-                            response = requests.get(file_url, stream=True, timeout=600)
-                            response.raise_for_status()
-                            video_bytes = response.content
+                            logger.info(f"Скачивание большого файла через стандартный API: {file_url}")
                         else:
                             # Для маленьких файлов пробуем стандартный способ
                             try:
                                 video_bytes = bot.download_file(file_path)
+                                logger.info(f"Файл скачан через bot.download_file")
                             except Exception as e:
                                 if "too big" in str(e).lower() or "400" in str(e):
                                     logger.info(f"bot.download_file не сработал, используем прямую ссылку")
-                                    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                    if BOT_API_SERVER:
+                                        file_url = f"{BOT_API_SERVER.rstrip('/')}/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                    else:
+                                        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                                     response = requests.get(file_url, stream=True, timeout=600)
                                     response.raise_for_status()
                                     video_bytes = response.content
                                 else:
                                     raise
+                            if video_bytes:
+                                # Файл уже скачан через bot.download_file
+                                pass
+                        
+                        # Если файл еще не скачан, скачиваем через прямую ссылку
+                        if not video_bytes:
+                            response = requests.get(file_url, stream=True, timeout=600)
+                            response.raise_for_status()
+                            video_bytes = response.content
+                            logger.info(f"✅ Файл скачан ({len(video_bytes)} bytes)")
                     except Exception as e:
                         logger.error(f"Ошибка скачивания файла: {e}")
                         raise
