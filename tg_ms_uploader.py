@@ -23,7 +23,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 MOYSKLAD_API_TOKEN = os.getenv('MOYSKLAD_API_TOKEN')
 ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')  # ID администратора для управления ботом
-GOOGLE_DRIVE_ROOT_FOLDER_ID = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID', '1LD4-cJSccuiLDsczuSO0foJl5S75S_co')
+GOOGLE_DRIVE_ROOT_FOLDER_ID = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID', '12SSLkDFGdkmF6xI9F8RPbnZDS1FdKhNH')
 
 # Проверка наличия токенов
 if not TELEGRAM_BOT_TOKEN or not MOYSKLAD_API_TOKEN:
@@ -2013,13 +2013,13 @@ def handle_code_input_text_for_video(message, code):
             user_data[user_id]['history'] = user_data[user_id]['history'][-5:]
         
         # Сохраняем данные
-        # Для видео используем код самого варианта, а не код родителя
+        # Для видео используем код родителя (parent_code), а не код варианта
         user_data[user_id].update({
             'variant_id': variant_id,
             'variant_code': code,
             'variant_name': variant_name,
             'color': color,
-            'parent_code': code,  # Для видео используем код варианта, а не код родителя
+            'parent_code': parent_code,  # Используем код родителя для структуры папок
             'upload_type': 'video',
             'uploaded_count': 0
         })
@@ -2041,7 +2041,7 @@ def handle_code_input_text_for_video(message, code):
             f"{color_info}"
             f"{stock_info}"
             f"🎥 **Теперь отправьте видео**\n\n"
-            f"Видео будет загружено в папку: `{code}/{color if color else 'Без цвета'}/Видео/`\n\n"
+            f"Видео будет загружено в папку: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n\n"
             f"Когда закончите - нажмите **✅ Завершить**",
             reply_markup=get_video_upload_keyboard(),
             parse_mode='Markdown'
@@ -2589,7 +2589,7 @@ def process_video_queue(user_id):
                     uploaded = user_data[user_id]['uploaded_count']
                     
                     result_msg = f"✅ Видео '{filename}' загружено в Google Drive!\n\n"
-                    result_msg += f"📁 Путь: `{variant_code}/{color if color else 'Без цвета'}/Видео/`\n"
+                    result_msg += f"📁 Путь: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n"
                     result_msg += f"🎥 Загружено видео: {uploaded}"
                     
                     if remaining > 0:
