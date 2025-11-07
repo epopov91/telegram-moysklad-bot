@@ -2225,7 +2225,9 @@ def process_video_queue(user_id):
                                         else:
                                             file_path = file_path_result
                                         # Сохраняем оригинальный путь для скачивания из контейнера
-                                        user_data[message.chat.id]['local_file_path'] = file_path_result
+                                        if user_id not in user_data:
+                                            user_data[user_id] = {}
+                                        user_data[user_id]['local_file_path'] = file_path_result
                                         logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path} (из {file_path_result})")
                                     else:
                                         raise Exception(f"Локальный Bot API вернул ошибку: {api_data}")
@@ -2272,7 +2274,7 @@ def process_video_queue(user_id):
                     try:
                         video_bytes = None
                         # Проверяем, есть ли сохраненный путь от локального сервера
-                        local_file_path = user_data.get(message.chat.id, {}).get('local_file_path')
+                        local_file_path = user_data.get(user_id, {}).get('local_file_path')
                         
                         if BOT_API_SERVER and local_file_path and file_size and file_size > 20 * 1024 * 1024:
                             # Для больших файлов с локального сервера читаем из Docker контейнера
@@ -2401,7 +2403,9 @@ def process_video_queue(user_id):
                                         else:
                                             file_path = file_path_result
                                         # Сохраняем оригинальный путь для скачивания из контейнера
-                                        user_data[message.chat.id]['local_file_path'] = file_path_result
+                                        if user_id not in user_data:
+                                            user_data[user_id] = {}
+                                        user_data[user_id]['local_file_path'] = file_path_result
                                         logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path} (из {file_path_result})")
                                     else:
                                         raise Exception(f"Локальный Bot API вернул ошибку: {api_data}")
@@ -2448,7 +2452,7 @@ def process_video_queue(user_id):
                     try:
                         video_bytes = None
                         # Проверяем, есть ли сохраненный путь от локального сервера
-                        local_file_path = user_data.get(message.chat.id, {}).get('local_file_path')
+                        local_file_path = user_data.get(user_id, {}).get('local_file_path')
                         
                         if BOT_API_SERVER and local_file_path and file_size and file_size > 20 * 1024 * 1024:
                             # Для больших файлов с локального сервера читаем из Docker контейнера
