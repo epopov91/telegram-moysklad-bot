@@ -761,6 +761,21 @@ def upload_video_to_drive(video_bytes: bytes, filename: str, folder_id: str, dri
         ).execute()
         
         file_id = file.get('id')
+        
+        # Делаем файл доступным для просмотра всем, у кого есть ссылка
+        try:
+            permission = {
+                'type': 'anyone',
+                'role': 'reader'
+            }
+            drive_api.drive_service.permissions().create(
+                fileId=file_id,
+                body=permission
+            ).execute()
+            logger.info(f"Файл '{filename}' сделан доступным для просмотра по ссылке")
+        except Exception as perm_e:
+            logger.warning(f"Не удалось установить права доступа для файла '{filename}': {perm_e}")
+        
         logger.info(f"Видео '{filename}' успешно загружено в Google Drive (ID: {file_id})")
         return file_id
         
@@ -2589,8 +2604,8 @@ def process_video_queue(user_id):
                     user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
                     uploaded = user_data[user_id]['uploaded_count']
                     
-                    # Формируем ссылку на файл
-                    video_link = f"https://drive.google.com/file/d/{file_id}/view"
+                    # Формируем ссылку на файл (используем формат с open для лучшей совместимости)
+                    video_link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
                     
                     result_msg = f"✅ Видео '{filename}' загружено в Google Drive!\n\n"
                     result_msg += f"📁 Путь: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n"
