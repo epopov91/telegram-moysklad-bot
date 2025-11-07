@@ -16,6 +16,7 @@ from typing import Optional, Tuple
 from dotenv import load_dotenv
 import telebot
 from telebot import types
+from telebot import apihelper
 
 # Загрузка переменных окружения из .env файла
 load_dotenv()
@@ -67,15 +68,16 @@ BACKUP_PHOTOS = False  # Опция сохранения фото на диск
 # Пробуем использовать локальный Bot API сервер для больших файлов
 BOT_API_SERVER = os.getenv('BOT_API_SERVER', None)  # Например: http://localhost:8081
 if BOT_API_SERVER:
-    # Формат должен быть: http://localhost:8081/bot
+    # Настраиваем кастомный сервер через apihelper
     api_url = BOT_API_SERVER.rstrip('/')
     if not api_url.endswith('/bot'):
         api_url = f"{api_url}/bot"
-    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, api_server_url=api_url)
+    apihelper.API_URL = api_url
     logger.info(f"Используется локальный Bot API сервер: {api_url}")
 else:
-    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
     logger.info("Используется стандартный Telegram Bot API")
+
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # Состояния пользователей
 user_states = {}
