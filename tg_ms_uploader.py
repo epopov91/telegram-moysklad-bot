@@ -2213,8 +2213,20 @@ def process_video_queue(user_id):
                                     api_response.raise_for_status()
                                     api_data = api_response.json()
                                     if api_data.get('ok') and api_data.get('result'):
-                                        file_path = api_data['result'].get('file_path')
-                                        logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path}")
+                                        file_path_result = api_data['result'].get('file_path')
+                                        # Локальный сервер возвращает абсолютный путь вида /var/lib/telegram-bot-api/TOKEN/path
+                                        # Извлекаем относительный путь для использования в URL скачивания
+                                        if file_path_result and file_path_result.startswith('/var/lib/telegram-bot-api/'):
+                                            parts = file_path_result.split('/')
+                                            if len(parts) > 5:
+                                                file_path = '/'.join(parts[5:])  # Пропускаем /var/lib/telegram-bot-api/TOKEN/
+                                            else:
+                                                file_path = file_path_result
+                                        else:
+                                            file_path = file_path_result
+                                        # Сохраняем оригинальный путь для скачивания из контейнера
+                                        user_data[message.chat.id]['local_file_path'] = file_path_result
+                                        logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path} (из {file_path_result})")
                                     else:
                                         raise Exception(f"Локальный Bot API вернул ошибку: {api_data}")
                                 else:
@@ -2326,8 +2338,20 @@ def process_video_queue(user_id):
                                     api_response.raise_for_status()
                                     api_data = api_response.json()
                                     if api_data.get('ok') and api_data.get('result'):
-                                        file_path = api_data['result'].get('file_path')
-                                        logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path}")
+                                        file_path_result = api_data['result'].get('file_path')
+                                        # Локальный сервер возвращает абсолютный путь вида /var/lib/telegram-bot-api/TOKEN/path
+                                        # Извлекаем относительный путь для использования в URL скачивания
+                                        if file_path_result and file_path_result.startswith('/var/lib/telegram-bot-api/'):
+                                            parts = file_path_result.split('/')
+                                            if len(parts) > 5:
+                                                file_path = '/'.join(parts[5:])  # Пропускаем /var/lib/telegram-bot-api/TOKEN/
+                                            else:
+                                                file_path = file_path_result
+                                        else:
+                                            file_path = file_path_result
+                                        # Сохраняем оригинальный путь для скачивания из контейнера
+                                        user_data[message.chat.id]['local_file_path'] = file_path_result
+                                        logger.info(f"✅ Получен file_path через локальный Bot API сервер: {file_path} (из {file_path_result})")
                                     else:
                                         raise Exception(f"Локальный Bot API вернул ошибку: {api_data}")
                                 else:
