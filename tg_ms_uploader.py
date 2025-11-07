@@ -2041,7 +2041,7 @@ def handle_code_input_text_for_video(message, code):
             f"{color_info}"
             f"{stock_info}"
             f"🎥 **Теперь отправьте видео**\n\n"
-            f"Видео будет загружено в папку: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n\n"
+            f"Видео будет загружено в папку: `{code}/{color if color else 'Без цвета'}/Видео/`\n\n"
             f"Когда закончите - нажмите **✅ Завершить**",
             reply_markup=get_video_upload_keyboard(),
             parse_mode='Markdown'
