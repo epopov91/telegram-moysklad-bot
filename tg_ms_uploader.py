@@ -721,7 +721,7 @@ def ensure_video_folder_structure(parent_code: str, color: Optional[str], drive_
         logger.error(f"Ошибка создания структуры папок для видео: {e}")
         return None
 
-def upload_video_to_drive(video_bytes: bytes, filename: str, folder_id: str, drive_api) -> bool:
+def upload_video_to_drive(video_bytes: bytes, filename: str, folder_id: str, drive_api) -> Optional[str]:
     """Загрузить видео в Google Drive
     
     Args:
@@ -731,11 +731,11 @@ def upload_video_to_drive(video_bytes: bytes, filename: str, folder_id: str, dri
         drive_api: экземпляр OAuth2DriveAPI
     
     Returns:
-        True если успешно, False при ошибке
+        file_id если успешно, None при ошибке
     """
     if not drive_api:
         logger.error("Drive API недоступен")
-        return False
+        return None
     
     try:
         # Определяем MIME тип
@@ -760,12 +760,13 @@ def upload_video_to_drive(video_bytes: bytes, filename: str, folder_id: str, dri
             fields='id'
         ).execute()
         
-        logger.info(f"Видео '{filename}' успешно загружено в Google Drive (ID: {file.get('id')})")
-        return True
+        file_id = file.get('id')
+        logger.info(f"Видео '{filename}' успешно загружено в Google Drive (ID: {file_id})")
+        return file_id
         
     except Exception as e:
         logger.error(f"Ошибка загрузки видео '{filename}' в Google Drive: {e}")
-        return False
+        return None
 
 # =========================
 # ПРОВЕРКА АДМИНА
@@ -2581,15 +2582,19 @@ def process_video_queue(user_id):
                     continue
                 
                 # Загружаем в Google Drive
-                success = upload_video_to_drive(video_bytes, filename, video_folder_id, drive_api)
+                file_id = upload_video_to_drive(video_bytes, filename, video_folder_id, drive_api)
                 
-                if success:
+                if file_id:
                     # Увеличиваем счетчик
                     user_data[user_id]['uploaded_count'] = user_data[user_id].get('uploaded_count', 0) + 1
                     uploaded = user_data[user_id]['uploaded_count']
                     
+                    # Формируем ссылку на файл
+                    video_link = f"https://drive.google.com/file/d/{file_id}/view"
+                    
                     result_msg = f"✅ Видео '{filename}' загружено в Google Drive!\n\n"
                     result_msg += f"📁 Путь: `{parent_code}/{color if color else 'Без цвета'}/Видео/`\n"
+                    result_msg += f"🔗 Ссылка: {video_link}\n"
                     result_msg += f"🎥 Загружено видео: {uploaded}"
                     
                     if remaining > 0:
